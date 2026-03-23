@@ -1,0 +1,29 @@
+# Environment
+.env
+credentials/
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+.next/
+frontend/.next/
+
+# Docker
+docker-compose.override.yml
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Data
+*.db
+*.sqlite3

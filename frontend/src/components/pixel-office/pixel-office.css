@@ -1,0 +1,397 @@
+/* ===== Pixel Office — CSS Pixel Art Styles ===== */
+
+.pixel-office {
+  position: relative;
+  background: #0c0e14;
+  border: 2px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  min-height: 320px;
+}
+
+/* Grid floor pattern */
+.pixel-office::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background-image:
+    linear-gradient(rgba(76, 110, 245, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(76, 110, 245, 0.03) 1px, transparent 1px);
+  background-size: 24px 24px;
+  pointer-events: none;
+}
+
+/* ===== Room ===== */
+.pixel-room {
+  position: relative;
+  background: rgba(30, 34, 53, 0.6);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  min-height: 120px;
+  transition: border-color 0.3s;
+}
+
+.pixel-room:hover {
+  border-color: rgba(76, 110, 245, 0.4);
+}
+
+.pixel-room__label {
+  position: absolute;
+  top: 6px;
+  left: 10px;
+  font-size: 10px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--text-secondary);
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.pixel-room__label::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--accent);
+}
+
+.pixel-room--ceo .pixel-room__label::before {
+  background: var(--warning);
+}
+
+/* ===== Desk ===== */
+.pixel-desk {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  cursor: pointer;
+  transition: transform 0.2s;
+}
+
+.pixel-desk:hover {
+  transform: translateY(-2px);
+}
+
+.pixel-desk:hover .pixel-desk__surface {
+  border-color: var(--accent);
+}
+
+.pixel-desk__surface {
+  width: 56px;
+  height: 12px;
+  background: #2a2e3f;
+  border: 1px solid #3a3f55;
+  border-radius: 2px;
+  position: relative;
+  transition: border-color 0.2s;
+}
+
+/* Monitor on desk */
+.pixel-desk__surface::before {
+  content: '';
+  position: absolute;
+  bottom: 100%;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 18px;
+  height: 14px;
+  background: #1a1d29;
+  border: 1px solid #3a3f55;
+  border-bottom: none;
+  border-radius: 2px 2px 0 0;
+}
+
+/* Monitor screen glow */
+.pixel-desk__surface::after {
+  content: '';
+  position: absolute;
+  bottom: calc(100% + 2px);
+  left: 50%;
+  transform: translateX(-50%);
+  width: 14px;
+  height: 10px;
+  border-radius: 1px;
+}
+
+/* Screen color by agent state */
+.pixel-desk--idle .pixel-desk__surface::after {
+  background: rgba(64, 192, 87, 0.3);
+}
+.pixel-desk--thinking .pixel-desk__surface::after {
+  background: rgba(76, 110, 245, 0.5);
+  animation: screen-flicker 0.8s infinite;
+}
+.pixel-desk--acting .pixel-desk__surface::after {
+  background: rgba(250, 176, 5, 0.5);
+  animation: screen-flicker 0.5s infinite;
+}
+.pixel-desk--waiting_approval .pixel-desk__surface::after {
+  background: rgba(250, 176, 5, 0.3);
+}
+.pixel-desk--paused .pixel-desk__surface::after {
+  background: rgba(139, 143, 163, 0.2);
+}
+.pixel-desk--stopped .pixel-desk__surface::after {
+  background: rgba(139, 143, 163, 0.1);
+}
+.pixel-desk--error .pixel-desk__surface::after {
+  background: rgba(250, 82, 82, 0.5);
+  animation: error-flash 0.4s infinite;
+}
+
+/* Desk legs */
+.pixel-desk__legs {
+  display: flex;
+  justify-content: space-between;
+  width: 48px;
+}
+.pixel-desk__legs::before,
+.pixel-desk__legs::after {
+  content: '';
+  width: 3px;
+  height: 8px;
+  background: #2a2e3f;
+  border-radius: 0 0 1px 1px;
+}
+
+/* ===== Agent Character ===== */
+.pixel-agent {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  margin-bottom: 2px;
+}
+
+/* Head */
+.pixel-agent__head {
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
+  position: relative;
+  z-index: 1;
+}
+
+/* Body */
+.pixel-agent__body {
+  width: 18px;
+  height: 10px;
+  border-radius: 2px 2px 0 0;
+  margin-top: -2px;
+}
+
+/* Agent name tooltip */
+.pixel-desk__name {
+  font-size: 9px;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-top: 2px;
+  white-space: nowrap;
+  max-width: 64px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  text-align: center;
+  transition: color 0.2s;
+}
+.pixel-desk:hover .pixel-desk__name {
+  color: var(--text-primary);
+}
+
+/* ===== Status Bubble ===== */
+.pixel-bubble {
+  position: absolute;
+  top: -20px;
+  left: 50%;
+  transform: translateX(-50%);
+  font-size: 10px;
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 4px;
+  background: rgba(30, 34, 53, 0.9);
+  border: 1px solid var(--border);
+  white-space: nowrap;
+  z-index: 10;
+  pointer-events: none;
+}
+
+/* Thinking dots */
+.pixel-bubble--thinking::after {
+  content: '...';
+  animation: thinking-dots 1.5s steps(3) infinite;
+  display: inline-block;
+  width: 12px;
+  overflow: hidden;
+  vertical-align: bottom;
+}
+
+/* ===== Color Palette by Role ===== */
+/* CEO - gold */
+.pixel-agent--ceo .pixel-agent__head { background: #fab005; }
+.pixel-agent--ceo .pixel-agent__body { background: #e6a100; }
+
+/* Researcher - blue */
+.pixel-agent--researcher .pixel-agent__head { background: #4c6ef5; }
+.pixel-agent--researcher .pixel-agent__body { background: #3b5bdb; }
+
+/* Developer - green */
+.pixel-agent--developer .pixel-agent__head { background: #40c057; }
+.pixel-agent--developer .pixel-agent__body { background: #2f9e44; }
+
+/* Analyst - purple */
+.pixel-agent--analyst .pixel-agent__head { background: #be4bdb; }
+.pixel-agent--analyst .pixel-agent__body { background: #9c36b5; }
+
+/* Trader - orange */
+.pixel-agent--trader .pixel-agent__head { background: #fd7e14; }
+.pixel-agent--trader .pixel-agent__body { background: #e8590c; }
+
+/* Manager/default - teal */
+.pixel-agent--default .pixel-agent__head { background: #20c997; }
+.pixel-agent--default .pixel-agent__body { background: #12b886; }
+
+/* Risk - red */
+.pixel-agent--risk .pixel-agent__head { background: #fa5252; }
+.pixel-agent--risk .pixel-agent__body { background: #e03131; }
+
+/* ===== State Animations ===== */
+/* Idle: gentle breathing */
+.pixel-desk--idle .pixel-agent {
+  animation: breathe 3s ease-in-out infinite;
+}
+
+/* Thinking: typing motion */
+.pixel-desk--thinking .pixel-agent {
+  animation: typing 0.6s ease-in-out infinite;
+}
+
+/* Acting: active bounce */
+.pixel-desk--acting .pixel-agent {
+  animation: acting-bounce 0.8s ease-in-out infinite;
+}
+
+/* Waiting: slow sway */
+.pixel-desk--waiting_approval .pixel-agent {
+  animation: sway 2s ease-in-out infinite;
+}
+
+/* Error: shake */
+.pixel-desk--error .pixel-agent {
+  animation: error-shake 0.3s ease-in-out infinite;
+}
+
+/* Stopped: dim */
+.pixel-desk--stopped .pixel-agent {
+  opacity: 0.3;
+}
+
+.pixel-desk--paused .pixel-agent {
+  opacity: 0.5;
+}
+
+@keyframes breathe {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-1px); }
+}
+
+@keyframes typing {
+  0%, 100% { transform: translateY(0); }
+  25% { transform: translateY(-1px) rotate(-2deg); }
+  75% { transform: translateY(-1px) rotate(2deg); }
+}
+
+@keyframes acting-bounce {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-3px); }
+}
+
+@keyframes sway {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(2px); }
+}
+
+@keyframes error-shake {
+  0%, 100% { transform: translateX(0); }
+  25% { transform: translateX(-2px); }
+  75% { transform: translateX(2px); }
+}
+
+@keyframes screen-flicker {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes error-flash {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.2; }
+}
+
+@keyframes thinking-dots {
+  0% { width: 4px; }
+  33% { width: 8px; }
+  66% { width: 12px; }
+}
+
+/* ===== Speech Bubble ===== */
+.pixel-speech {
+  position: absolute;
+  top: -28px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 6px;
+  font-size: 8px;
+  color: var(--text-secondary);
+  white-space: nowrap;
+  z-index: 10;
+  animation: speech-fade 3s ease-out forwards;
+}
+
+.pixel-speech::after {
+  content: '';
+  position: absolute;
+  bottom: -4px;
+  left: 50%;
+  transform: translateX(-50%);
+  width: 0;
+  height: 0;
+  border-left: 4px solid transparent;
+  border-right: 4px solid transparent;
+  border-top: 4px solid var(--border);
+}
+
+@keyframes speech-fade {
+  0% { opacity: 0; transform: translateX(-50%) translateY(4px); }
+  10% { opacity: 1; transform: translateX(-50%) translateY(0); }
+  80% { opacity: 1; }
+  100% { opacity: 0; }
+}
+
+/* ===== Room Decorations ===== */
+.pixel-plant {
+  width: 10px;
+  height: 16px;
+  position: relative;
+}
+.pixel-plant::before {
+  content: '🌿';
+  font-size: 12px;
+  position: absolute;
+  bottom: 0;
+}
+
+.pixel-coffee {
+  width: 8px;
+  height: 8px;
+  position: relative;
+}
+.pixel-coffee::before {
+  content: '☕';
+  font-size: 8px;
+  position: absolute;
+}

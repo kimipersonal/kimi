@@ -1,0 +1,573 @@
+Try DeepSeek R1 0528 API Service
+To use DeepSeek R1 0528 API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=us-central1-aiplatform.googleapis.com
+REGION=us-central1
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"deepseek-ai/deepseek-r1-0528-maas", "stream":true, "messages":[{"role": "user", "content": "Summer travel plan to Paris"}]}'
+Use cases
+DeepSeek-R1 models are well-suited for a variety of text generation tasks.
+
+Try GLM 5 API Service
+To use GLM 5 API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=aiplatform.googleapis.com
+REGION=global
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"zai-org/glm-5-maas", "stream":true, "messages":[{"role": "user", "content": "Summer travel plan to Paris"}]}'
+Documentation
+
+
+
+
+
+Try GLM 4.7 API Service
+To use GLM 4.7 API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=aiplatform.googleapis.com
+REGION=global
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"zai-org/glm-4.7-maas", "stream":true, "messages":[{"role": "user", "content": "Summer travel plan to Paris"}]}'
+Use cases
+
+Try DeepSeek V3.2 API Service
+To use DeepSeek V3.2 API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=aiplatform.googleapis.com
+REGION=global
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"deepseek-ai/deepseek-v3.2-maas", "stream":true, "messages":[{"role": "user", "content": "Summer travel plan to Paris"}]}'
+Use cases
+
+
+Try DeepSeek OCR API Service
+To use DeepSeek OCR API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=aiplatform.googleapis.com
+REGION=global
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"deepseek-ai/deepseek-ocr-maas", "stream":true, "messages":[{"role": "user", "content": [{"type": "image_url", "image_url": "gs://cloud-samples-data/vision/ocr/sign.jpg"}]}]}'
+Use cases
+DeepSeek-OCR is capable of vision-text compression and can be applied to large-scale pretraining data production and other use cases.
+
+Try Kimi K2 API Service
+To use Kimi K2 API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=aiplatform.googleapis.com
+REGION=global
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"moonshotai/kimi-k2-thinking-maas", "stream":true, "messages":[{"role": "user", "content": "Summer travel plan to Paris" }]}'
+Use cases
+
+Try MiniMax-M2 API Service
+To use MiniMax-M2 API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=aiplatform.googleapis.com
+REGION=global
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"minimaxai/minimax-m2-maas", "stream":true, "messages":[{"role": "user", "content": "Summer travel plan to Paris."}]}'
+Use cases
+
+Try Qwen3-Next Instruct API Service
+To use Qwen3-Next Instruct API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=aiplatform.googleapis.com
+REGION=global
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"qwen/qwen3-next-80b-a3b-instruct-maas", "stream":true, "messages":[{"role": "user", "content": "Summer travel plan to Paris"}]}'
+Use cases
+
+Try E5 API Service
+To use E5 API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=us-central1-aiplatform.googleapis.com
+REGION=us-central1
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/embeddings \
+  -d '{"model":"intfloat/multilingual-e5-large-instruct-maas", "input": "Embed me."}'
+Available models are intfloat/multilingual-e5-large-instruct-maas and intfloat/multilingual-e5-small-maas in us-central1 and europe-west4.
+
+Try DeepSeek V3.1 API Service
+To use DeepSeek API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=us-west2-aiplatform.googleapis.com
+REGION=us-west2
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"deepseek-ai/deepseek-v3.1-maas", "stream":true, "messages":[{"role": "user", "content": "Summer travel plan to Paris"}]}'
+Use cases
+DeepSeek-V3.1 supports hybrid inference modes of thinking mode and non-thinking mode. It can be applied to a variety of applications, including text generation, chat applications, tool calling, code generation and search.
+
+Try GPT OSS API Service
+To use GPT OSS API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=aiplatform.googleapis.com
+REGION=global
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"openai/gpt-oss-120b-maas", "stream":true, "messages":[{"role": "user", "content": "Summer travel plan to Paris"}]}'
+Use cases
+
+Try DeepSeek R1 0528 API Service
+To use DeepSeek R1 0528 API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=us-central1-aiplatform.googleapis.com
+REGION=us-central1
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"deepseek-ai/deepseek-r1-0528-maas", "stream":true, "messages":[{"role": "user", "content": "Summer travel plan to Paris"}]}'
+Use cases
+DeepSeek-R1 models are well-suited for a variety of text generation tasks.
+
+Try Llama 4 API Service
+To use Llama 4 API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=us-east5-aiplatform.googleapis.com
+REGION=us-east5
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command (replace the model name with the appropriate model, either llama-4-maverick-17b-128e-instruct-maas or llama-4-scout-17b-16e-instruct-maas)
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"meta/llama-4-maverick-17b-128e-instruct-maas", "stream":true, "messages":[{"role": "user", "content": "Summer travel plan to Paris"}]}'
+Use cases
+
+Try Llama 3.3 API Service
+To use Llama 3.3 API service with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+ENDPOINT=us-central1-aiplatform.googleapis.com
+REGION=us-central1
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command:
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json" https://${ENDPOINT}/v1/projects/${PROJECT_ID}/locations/${REGION}/endpoints/openapi/chat/completions \
+  -d '{"model":"meta/llama-3.3-70b-instruct-maas", "stream":true, "messages":[{"role": "user", "content": "Summer travel plan to Paris"}]}'
+Use cases
+
+
+Get started
+Before you begin
+Enable the Vertex AI API.
+
+Authenticate with one of the standard mechanisms documented here.
+
+Vertex AI API - cURL
+Execute the following command in Cloud Shell or a local terminal window with the gcloud CLI installed. Authenticate and replace PROJECT_ID with your Google Cloud project ID. You can find the supported regions here.
+
+MODEL="codestral-2"
+REGION="europe-west4" #or “us-central1”
+
+
+url="https://$REGION-aiplatform.googleapis.com/v1/projects/$PROJECT_ID/locations/$REGION/publishers/mistralai/models/$MODEL:rawPredict"
+
+
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+
+You can send a POST request to the specified API endpoint to get a response from the Mistral model. Find here, Mistral's API documentation and more info on parameter settings such as temperature, top_p, max_tokens, etc.
+
+Please be aware that safe_prompt is the only parameter from Mistral API not supported for now. This will be supported soon. You will be able to set safe_prompt:true to enable the optional system prompt in order to enforce guardrails on top of Mistral models for chat completion.
+
+Fill-in-the-middle example
+MODEL="codestral-2"
+REGION="europe-west4" #or “us-central1”
+
+
+url="https://$REGION-aiplatform.googleapis.com/v1/projects/$PROJECT_ID/locations/$REGION/publishers/mistralai/models/$MODEL:rawPredict"
+
+
+curl \
+  -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+
+Python code sample
+You will need to install the httpx and the google-auth packages in your virtual environment. You will also need to set the GOOGLE_REGION and GOOGLE_PROJECT_ID environment variables respectively to the target region and project ids to use. You can find the supported regions here.
+
+Instruct example
+import httpx
+import google.auth
+from google.auth.transport.requests import Request
+import os
+
+
+def get_credentials():
+    credentials, project_id = google.auth.default(
+        scopes=["https://www.googleapis.com/auth/cloud-platform"]
+    )
+
+Fill-in-the-middle example: replace the data dict from the instruct example with
+data = {
+  "model": model,
+  "prompt": "def say_hello(name: str):",
+  "suffix": "return n_words"
+}
+Evaluation Metrics
+Offline Fill-in-the-middle
+Scores are in percentage
+
+| Model | HumanEval FIM (pass@1) | Cross-Codes FIM (chrf) | FIM RepoEval (chrf) | Short Completions (pass@1) | Full Functions (pass@1) | | - | - | - | - | - | - | | Codestral 25.01 | 79.30 | 47.93 | 66.04 | 80.86 | 36.83 | | Codestral 2 | 82.39 | 51.34 | 67.11 | 99.34 | 44.33 |
+
+Chat
+Scores are in percentage
+
+| Model | HumanEval (pass@1) | Avg MultiPL-E (pass@1) | MBPP (pass@1) | Livecodebench v6 (pass@1) | Math Hendrycks (maj@1) | IF eval v8 (match) | | - | - | - | - | - | - | - | | Codestral 25.01 | 85.37 | 75.32 | 78.60 | 26.86 | 62.76 | 77.66 | | Codestral 2 | 87.20 | 80.88 | 83.27 | 28.57 | 82.20 | 85.34 |
+
+Online Fill-in-the-middle
+Relative change to latest version in percentage
+
+| Acceptance Rate | Accepted Completions | Accepted Characters | Accepted Lines | | - | - | - | - | | +30.18 | +8.10 | +10.91 | +11.16 |
+
+Model input and output
+Instruct example
+
+Sample Input (POST request payload)
+
+{
+    "model": "codestral-2",
+    "temperature": 0,
+    "messages": [
+      {"role": "user", "content": "What is the best French cheese?"}
+    ]
+}
+Sample Output
+
+{
+  "id": "aaf3143a42a9468ab658098ffbe0de25",
+  "object": "chat.completion",
+  "created": 1721297602,
+  "model": "codestral-2",
+  "choices": [
+  {
+    "index": 0,
+    "message": {
+      "role": "assistant",
+
+Fill-in-the-middle example
+
+Sample Input (POST request payload)
+
+{
+  "model":"codestral-2",
+  "prompt": "def count_words_in_file(file_path: str):",
+  "suffix": "return n_words"
+}
+Sample Output
+
+{
+  "id": "5d1b1e6a54144686bb9806dee733ed4d",
+  "object": "chat.completion",
+  "created": 1721297783,
+  "model": "codestral-2",
+  "choices": [
+  {
+    "index": 0,
+    "message": {
+      "role": "assistant",
+
+Best practices and limitations
+
+Try Gemini 3.1 Flash-Lite Preview (curl)
+These instructions don't apply if you're using express mode for Google Cloud. If you're using express mode, follow the instructions for express mode instead.
+
+To use Gemini 3.1 Flash-Lite Preview with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+
+Configure environment variables by entering the following. Replace YOUR_PROJECT_ID with the ID of your Google Cloud project.
+
+MODEL_ID="gemini-3.1-flash-lite-preview"
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+
+curl \
+-X POST \
+-H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+-H "Content-Type: application/json" \
+https://aiplatform.googleapis.com/v1/projects/${PROJECT_ID}/locations/global/publishers/google/models/${MODEL_ID}:streamGenerateContent -d \
+$'{
+"contents": {
+  "role": "user",
+  "parts": [
+    {
+
+Try Gemini 3.1 Flash-Lite Preview while using express mode (curl)
+Follow these instructions only if you're using express mode for Google Cloud.
+
+To use Gemini 3.1 Flash-Lite Preview with the command line interface (CLI), do the following:
+
+Open Cloud Shell or a local terminal window with the gcloud CLI installed.
+
+Configure environment variables by entering the following. Replace YOUR_API_KEY with the API key that you created for using express mode.
+
+MODEL_ID="gemini-3.1-flash-lite-preview"
+PROJECT_ID="YOUR_PROJECT_ID"
+Send a prompt request by entering the following curl command
+
+curl \
+-X POST \
+-H "Authorization: Bearer $(gcloud auth application-default print-access-token)" \
+-H "Content-Type: application/json" \
+https://aiplatform.googleapis.com/v1/publishers/google/models/${MODEL_ID}:streamGenerateContent -d \
+$'{
+  "contents": {
+    "role": "user",
+    "parts": [
+      {
+
+For more information, see the Gemini API reference.
+
+Try Gemini 3.1 Flash-Lite Preview (Python)
+These instructions don't apply if you're using express mode for Google Cloud. If you're using express mode, follow the instructions for express mode instead.
+
+Before trying this sample, follow the Python setup instructions in the Google Gen AI SDK quickstart using client libraries.
+
+To authenticate to Vertex AI, set up Application Default Credentials. For more information, see Set up authentication for a local development environment.
+
+Install or update the Google Gen AI SDK. You can also install it in a virtual environment.
+
+pip3 install --upgrade --user google-genai
+Send a prompt request. Replace YOUR_PROJECT_ID with your Google Cloud project ID.
+
+from google import genai
+from google.genai import types
+client = genai.Client(
+vertexai=True, project="YOUR_PROJECT_ID", location="global",
+)
+# If your image is stored in Google Cloud Storage, you can use the from_uri class method to create a Part object.
+IMAGE_URI = "gs://generativeai-downloads/images/scones.jpg"
+model = "gemini-3.1-flash-lite-preview"
+response = client.models.generate_content(
+model=model,
+
+For more information, see the Gemini SDK reference.
+
+Try Gemini 3.1 Flash-Lite Preview while using express mode (Python)
+Follow these instructions only if you're using express mode for Google Cloud.
+
+Before trying this sample, follow the Python setup instructions in the Google Gen AI SDK quickstart using client libraries.
+
+To authenticate to Vertex AI, set up Application Default Credentials. For more information, see Set up authentication for a local development environment.
+
+Install or update the Google Gen AI SDK. You can also install it in a virtual environment.
+
+!pip3 install --upgrade --user google-genai
+Send a prompt request. Replace YOUR_API_KEY with your API key.
+
+from google import genai
+from google.genai import types
+client = genai.Client(
+vertexai=True, api_key="YOUR_API_KEY"
+)
+# If your image is stored in Google Cloud Storage, you can use the from_uri class method to create a Part object.
+IMAGE_URI = "gs://generativeai-downloads/images/scones.jpg"
+model = "gemini-3.1-flash-lite-preview"
+response = client.models.generate_content(
+model=model,
+
+
+For more information, see the Gemini SDK reference.
+
+Try it now Sonnet 4.6
+Quick Python test
+
+pip install 'anthropic[vertex]'
+from anthropic import AnthropicVertex
+
+client = AnthropicVertex(region="global", project_id="YOUR_PROJECT_ID")
+message = client.messages.create(
+ max_tokens=1024,
+ messages=[{"role": "user", "content": "Hello! Can you help me?"}],
+ model="claude-sonnet-4-6"
+)
+print(message.content[0].text)
+Ready to build something more complex? Continue to the detailed setup below.
+
+Get started
+You can use Claude Sonnet 4.6 in Vertex AI Studio or use the API to integrate the model in your application.
+
+Before you begin
+Enable the Vertex AI API.
+Authenticate with one of the standard mechanisms documented here.
+Try Claude Sonnet 4.6 in Vertex AI Studio (console)
+To use Claude Sonnet 4.6 in Vertex AI Studio, visit Vertex AI Studio and select Claude Sonnet 4.6. You can write a prompt then click Submit to view the output generated by Claude Sonnet 4.6.
+
+Try Claude Sonnet 4.6 (cURL)
+The following is a sample prompt to the model. To learn more about the possible request parameters, see the Claude Messages API Reference.
+
+Note that the API for Claude on Vertex differs from the Anthropic API documentation in the following ways:
+
+model is not a valid parameter. The model is instead specified in the Google Cloud endpoint URL.
+anthropic_version is a required parameter and must be set to vertex-2023-10-16.
+Request JSON body:
+
+{
+  "anthropic_version": "vertex-2023-10-16",
+  "messages": [
+    {
+      "role": "user",
+      "content": "Send me a recipe for banana bread."
+    }
+  ],
+  "max_tokens": 1024,
+  "stream": true
+
+Set stream to true to incrementally stream the response using server-sent events. Streaming substantially reduces end-user perception of latency, because the response is returned incrementally as it's generated.
+
+Replace your-gcp-project-id with your actual project ID and run:
+
+curl -X POST \
+  -H "Authorization: Bearer $(gcloud auth print-access-token)" \
+  -H "Content-Type: application/json; charset=utf-8" \
+  -d '{
+    "anthropic_version": "vertex-2023-10-16",
+    "messages": [
+      {
+        "role": "user",
+        "content": "Send me a recipe for banana bread."
+      }
+
+Expected Response:
+
+{
+  "id": "msg_01AbCdEfGhIjKlMnOpQrStUv",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "text",
+      "text": "Here's a delicious banana bread recipe:\n\n**Classic Banana Bread**\n\nIngredients:\n- 3-4 ripe bananas, mashed\n- 1/3 cup melted butter\n- 3/4 cup sugar\n- 1 egg, beaten\n- 1 teaspoon vanilla extract\n- 1 teaspoon baking soda\n- Pinch of salt\n- 1 1/2 cups all-purpose flour\n\nInstructions:\n1. Preheat oven to 350°F (175°C)\n2. Mix melted butter with ma
+Try Claude Sonnet 4.6 (Anthropic's Vertex SDK)
+Anthropic's Vertex SDK support Python and TypeScript.
+
+To install the Anthropic Python SDK:
+
+python -m pip install -U 'anthropic[vertex]'
+To use the SDK:
+
+from anthropic import AnthropicVertex
+
+LOCATION = "global"
+
+client = AnthropicVertex(region=LOCATION, project_id="PROJECT_ID")
+
+message = client.messages.create(
+    max_tokens=1024,
+    messages=[
+        {
+
+To use the SDK to stream messages:
+
+from anthropic import AnthropicVertex
+
+LOCATION = "global"
+
+client = AnthropicVertex(region=LOCATION, project_id="PROJECT_ID")
+
+with client.messages.stream(
+        max_tokens=1024,
+        messages=[
+            {
+
+To use the SDK to process images:
+
+import base64
+import httpx
+from anthropic import AnthropicVertex
+
+LOCATION = "global"
+
+client = AnthropicVertex(region=LOCATION, project_id="PROJECT_ID")
+
+image1_url = "https://upload.wikimedia.org/wikipedia/commons/a/a7/Camponotus_flavomarginatus_ant.jpg"
+image1_media_type = "image/jpeg"
+
+Additional Information
+Versions
