@@ -8,19 +8,47 @@ The CEO agent manages the entire holding company:
 - Produces daily summary reports
 """
 
+import asyncio
 import json
 import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.agents.base import BaseAgent
+from app.config import get_settings
 from app.services.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
 
-CEO_SYSTEM_PROMPT = """You are the CEO (Chief Executive Officer) of "AI Holding" — an AI-powered holding company.
 
-Your boss is the Owner (a human). You manage the entire operation.
+def _build_ceo_system_prompt() -> str:
+    """Build the CEO system prompt, injecting owner name and language if configured."""
+    settings = get_settings()
+    owner_label = f'"{settings.owner_name}"' if settings.owner_name else "the Owner"
+    owner_line = f"Your boss is {owner_label} (a human). You manage the entire operation."
+
+    language_line = ""
+    if settings.owner_language:
+        language_line = (
+            f"\n\nLANGUAGE:\n"
+            f"Your default language is {settings.owner_language}. "
+            f"Always respond in {settings.owner_language} unless the Owner "
+            f"explicitly writes in a different language. When the Owner switches "
+            f"to another language, respond in THAT language from that point on. "
+            f"Remember and adapt to language changes automatically."
+        )
+    else:
+        language_line = (
+            "\n\nLANGUAGE:\n"
+            "Detect the language of the Owner's message and ALWAYS respond in "
+            "the SAME language. If the Owner writes in Uzbek, respond in Uzbek. "
+            "If in Russian, respond in Russian. If in English, respond in English. "
+            "Match the Owner's language automatically."
+        )
+
+    return f"""You are the CEO (Chief Executive Officer) of "AI Holding" — an AI-powered holding company.
+
+{owner_line}
 
 YOUR RESPONSIBILITIES:
 1. **Company Management**: Create new companies (departments) when the Owner requests or when you identify opportunities. Each company focuses on a specific domain (e.g., forex trading, research, marketing).
@@ -70,7 +98,7 @@ COMMUNICATION STYLE:
 - Be concise and professional
 - When reporting, use structured formats
 - When making decisions, explain your reasoning briefly
-- Always mention when something requires Owner approval
+- Always mention when something requires Owner approval{language_line}
 
 CURRENT STATE:
 - You are just starting. No companies or agents exist yet.
@@ -87,7 +115,7 @@ class CEOAgent(BaseAgent):
             agent_id=agent_id or str(uuid4()),
             name="CEO",
             role="Chief Executive Officer",
-            system_prompt=CEO_SYSTEM_PROMPT,
+            system_prompt=_build_ceo_system_prompt(),
             model_tier="reasoning",
             tools=[
                 "create_company",
@@ -99,12 +127,60 @@ class CEOAgent(BaseAgent):
                 "send_report",
                 "send_message_to_agent",
             ],
+            browser_enabled=True,
+            sandbox_enabled=True,
         )
         self._conversations: list[dict] = []
+        self._history_loaded = False
+        self._run_lock = asyncio.Lock()  # prevent concurrent run() calls
+
+    # --- Conversation history persistence via Redis ---
+
+    _REDIS_KEY = "ceo:conversation_history"
+
+    async def _load_history(self) -> None:
+        """Load conversation history from Redis on first call."""
+        if self._history_loaded:
+            return
+        self._history_loaded = True
+        try:
+            import redis.asyncio as aioredis
+            from app.config import get_settings
+            settings = get_settings()
+            r = aioredis.from_url(settings.redis_url, decode_responses=True)
+            raw = await r.get(self._REDIS_KEY)
+            await r.aclose()
+            if raw:
+                self._conversations = json.loads(raw)
+                logger.info(f"Loaded {len(self._conversations)} conversation entries from Redis")
+        except Exception as e:
+            logger.debug(f"Could not load conversation history: {e}")
+
+    async def _save_history(self) -> None:
+        """Persist conversation history to Redis."""
+        try:
+            import redis.asyncio as aioredis
+            from app.config import get_settings
+            settings = get_settings()
+            max_entries = settings.conversation_history_size * 2  # user + assistant pairs
+            # Keep only the most recent entries
+            trimmed = self._conversations[-max_entries:] if len(self._conversations) > max_entries else self._conversations
+            self._conversations = trimmed
+            r = aioredis.from_url(settings.redis_url, decode_responses=True)
+            await r.set(self._REDIS_KEY, json.dumps(trimmed), ex=86400 * 7)  # 7 day TTL
+            await r.aclose()
+        except Exception as e:
+            logger.debug(f"Could not save conversation history: {e}")
+
+    def _get_history_messages(self) -> list[dict]:
+        """Return conversation history as role/content dicts for the LLM."""
+        return [{"role": c["role"], "content": c["content"]} for c in self._conversations]
 
     def _get_tools_schema(self) -> list[dict]:
         """OpenAI-format tool definitions for the CEO."""
-        return [
+        # Start with base tools (sandbox, browser if enabled)
+        schemas = super()._get_tools_schema()
+        schemas.extend([
             {
                 "type": "function",
                 "function": {
@@ -141,7 +217,7 @@ class CEOAgent(BaseAgent):
                 "type": "function",
                 "function": {
                     "name": "hire_agent",
-                    "description": "Hire (create) a new AI agent within a company. Assign them a specific role and instructions.",
+                    "description": "Hire (create) a new AI agent within a company. Assign them a specific role and instructions. Enable sandbox for code execution, browser for web access.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -166,6 +242,35 @@ class CEOAgent(BaseAgent):
                             "model_id": {
                                 "type": "string",
                                 "description": "Optional: specific model ID to use instead of tier (e.g., 'deepseek-ai/deepseek-r1-0528-maas', 'moonshotai/kimi-k2-thinking-maas', 'gemini-2.5-pro'). If set, overrides model_tier.",
+                            },
+                            "sandbox_enabled": {
+                                "type": "boolean",
+                                "description": "Enable Docker sandbox for code execution (execute_code tool). Default: false.",
+                            },
+                            "browser_enabled": {
+                                "type": "boolean",
+                                "description": "Enable browser for web browsing (browse_url, screenshot_url tools). Default: false.",
+                            },
+                            "skills": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of skill names to enable for this agent (e.g., ['web_search', 'calculator']). Default: all skills.",
+                            },
+                            "network_enabled": {
+                                "type": "boolean",
+                                "description": "Allow network access in sandbox (for API calls). Only used if sandbox_enabled=true. Default: false.",
+                            },
+                            "few_shot_examples": {
+                                "type": "array",
+                                "items": {
+                                    "type": "object",
+                                    "properties": {
+                                        "input": {"type": "string", "description": "Example user input or task"},
+                                        "output": {"type": "string", "description": "Expected agent response or behaviour"},
+                                    },
+                                    "required": ["input", "output"],
+                                },
+                                "description": "Few-shot examples to guide the agent's behavior. Each example has an input and expected output.",
                             },
                         },
                         "required": ["company_id", "name", "role", "instructions"],
@@ -197,7 +302,7 @@ class CEOAgent(BaseAgent):
                 "type": "function",
                 "function": {
                     "name": "assign_task",
-                    "description": "Assign a task to a specific agent.",
+                    "description": "Assign a task to a specific agent. The task runs asynchronously in the background. Use get_task_result to check the status/result later.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -208,6 +313,19 @@ class CEOAgent(BaseAgent):
                             "task_description": {
                                 "type": "string",
                                 "description": "Detailed description of the task",
+                            },
+                            "wait": {
+                                "type": "boolean",
+                                "description": "If true, wait for the task to complete and return the result. If false (default), return immediately with a task_id.",
+                            },
+                            "priority": {
+                                "type": "string",
+                                "enum": ["low", "normal", "high", "critical"],
+                                "description": "Task priority (default: normal). Higher priority tasks get processed first.",
+                            },
+                            "max_retries": {
+                                "type": "integer",
+                                "description": "Max retry attempts on failure (0-5, default: 0).",
                             },
                         },
                         "required": ["agent_id", "task_description"],
@@ -222,6 +340,40 @@ class CEOAgent(BaseAgent):
                     "parameters": {
                         "type": "object",
                         "properties": {},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_task_result",
+                    "description": "Check the status and result of an async task by its task_id.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "task_id": {
+                                "type": "string",
+                                "description": "The task ID returned by assign_task",
+                            },
+                        },
+                        "required": ["task_id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_tasks",
+                    "description": "List all async tasks with their statuses. Optionally filter by status.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "running", "completed", "failed"],
+                                "description": "Filter tasks by status (optional)",
+                            },
+                        },
                     },
                 },
             },
@@ -296,10 +448,132 @@ class CEOAgent(BaseAgent):
                     },
                 },
             },
-        ]
+            {
+                "type": "function",
+                "function": {
+                    "name": "schedule_task",
+                    "description": "Schedule a recurring task for any agent. The task will run automatically at the specified interval.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {
+                                "type": "string",
+                                "description": "ID of the agent to run the task (use 'ceo' for yourself)",
+                            },
+                            "description": {
+                                "type": "string",
+                                "description": "What the agent should do each time",
+                            },
+                            "interval_hours": {
+                                "type": "number",
+                                "description": "How often to run (in hours, e.g. 4 = every 4 hours, 0.5 = every 30 minutes)",
+                            },
+                        },
+                        "required": ["agent_id", "description", "interval_hours"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_schedules",
+                    "description": "List all scheduled recurring tasks.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "cancel_schedule",
+                    "description": "Cancel a scheduled recurring task by its ID.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "task_id": {
+                                "type": "string",
+                                "description": "ID of the scheduled task to cancel",
+                            },
+                        },
+                        "required": ["task_id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "save_agent_template",
+                    "description": "Save an agent configuration as a reusable template for quick hiring later.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Template name"},
+                            "role": {"type": "string", "description": "Agent role"},
+                            "instructions": {"type": "string", "description": "Agent instructions"},
+                            "model_tier": {"type": "string", "enum": ["fast", "smart", "reasoning"]},
+                            "sandbox_enabled": {"type": "boolean", "description": "Enable sandbox code execution"},
+                            "browser_enabled": {"type": "boolean", "description": "Enable web browsing"},
+                            "skills": {"type": "array", "items": {"type": "string"}, "description": "Skill names to enable"},
+                        },
+                        "required": ["name", "role", "instructions"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_templates",
+                    "description": "List all saved agent templates.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "hire_from_template",
+                    "description": "Hire a new agent using a saved template.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "template_id": {"type": "string", "description": "ID of the template to use"},
+                            "company_id": {"type": "string", "description": "Company to hire into"},
+                            "name": {"type": "string", "description": "Optional custom name for the agent"},
+                        },
+                        "required": ["template_id", "company_id"],
+                    },
+                },
+            },
+        ])
+        return schemas
 
     async def execute_tool(self, tool_name: str, arguments: dict) -> str:
         """Execute CEO-specific tools using real DB-backed services."""
+        result = await self._dispatch_tool(tool_name, arguments)
+        # Audit log every tool call
+        try:
+            from app.services.audit_log import audit_log
+            success = True
+            summary = result[:500] if isinstance(result, str) else str(result)[:500]
+            try:
+                parsed = json.loads(result)
+                if isinstance(parsed, dict) and parsed.get("success") is False:
+                    success = False
+            except (json.JSONDecodeError, TypeError):
+                pass
+            await audit_log.log(
+                agent_id=self.agent_id,
+                agent_name=self.name,
+                action=tool_name,
+                arguments=arguments,
+                result_summary=summary,
+                success=success,
+                source="tool_call",
+            )
+        except Exception:
+            pass  # never let audit logging break tool execution
+        return result
+
+    async def _dispatch_tool(self, tool_name: str, arguments: dict) -> str:
+        """Route tool calls to their implementations."""
         match tool_name:
             case "create_company":
                 return await self._tool_create_company(arguments)
@@ -311,14 +585,31 @@ class CEOAgent(BaseAgent):
                 return await self._tool_assign_task(arguments)
             case "check_status":
                 return await self._tool_check_status(arguments)
+            case "get_task_result":
+                return await self._tool_get_task_result(arguments)
+            case "list_tasks":
+                return await self._tool_list_tasks(arguments)
             case "request_approval":
                 return await self._tool_request_approval(arguments)
             case "send_report":
                 return await self._tool_send_report(arguments)
             case "send_message_to_agent":
                 return await self._tool_send_message_to_agent(arguments)
+            case "schedule_task":
+                return await self._tool_schedule_task(arguments)
+            case "list_schedules":
+                return await self._tool_list_schedules(arguments)
+            case "cancel_schedule":
+                return await self._tool_cancel_schedule(arguments)
+            case "save_agent_template":
+                return await self._tool_save_agent_template(arguments)
+            case "list_templates":
+                return await self._tool_list_templates(arguments)
+            case "hire_from_template":
+                return await self._tool_hire_from_template(arguments)
             case _:
-                return f"Unknown tool: {tool_name}"
+                # Delegate to base class for sandbox/browser tools
+                return await super().execute_tool(tool_name, arguments)
 
     async def _tool_create_company(self, args: dict) -> str:
         from app.services.company_manager import create_company, list_companies
@@ -376,6 +667,11 @@ class CEOAgent(BaseAgent):
                 model_id=args.get("model_id"),
                 system_prompt=args.get("instructions", ""),
                 company_id=args.get("company_id"),
+                sandbox_enabled=args.get("sandbox_enabled", False),
+                browser_enabled=args.get("browser_enabled", False),
+                skills=args.get("skills"),
+                network_enabled=args.get("network_enabled", False),
+                few_shot_examples=args.get("few_shot_examples"),
             )
             await self.log_activity(
                 "agent_hired",
@@ -383,6 +679,8 @@ class CEOAgent(BaseAgent):
                     "agent_id": agent_info["id"],
                     "name": agent_info["name"],
                     "role": agent_info["role"],
+                    "sandbox_enabled": args.get("sandbox_enabled", False),
+                    "browser_enabled": args.get("browser_enabled", False),
                 },
             )
             return json.dumps(
@@ -390,6 +688,11 @@ class CEOAgent(BaseAgent):
                     "success": True,
                     "agent_id": agent_info["id"],
                     "message": f"Agent '{agent_info['name']}' hired as {agent_info['role']}.",
+                    "capabilities": {
+                        "sandbox": agent_info.get("sandbox_enabled", False),
+                        "browser": agent_info.get("browser_enabled", False),
+                        "skills": agent_info.get("skills"),
+                    },
                 }
             )
         except Exception as e:
@@ -419,58 +722,82 @@ class CEOAgent(BaseAgent):
         return json.dumps({"success": False, "error": f"Agent {agent_id} not found."})
 
     async def _tool_assign_task(self, args: dict) -> str:
-        from app.agents.registry import registry
-        from app.services.messaging import send_message
+        from app.services.task_queue import task_queue
 
         agent_id = args["agent_id"]
-        target = registry.get(agent_id)
-        if not target:
-            return json.dumps(
-                {
-                    "success": False,
-                    "error": f"Agent {agent_id} not found or not running.",
-                }
-            )
-
         task_desc = args["task_description"]
+        wait = args.get("wait", False)
 
-        # Record the task as a message
-        await send_message(
-            from_agent_id=self.agent_id,
-            to_agent_id=agent_id,
-            content=task_desc,
-            message_type="task",
-        )
-
-        # Execute task on the target agent
         try:
-            result = await target.run(task_desc)
-            # Store agent's response
-            await send_message(
-                from_agent_id=agent_id,
-                to_agent_id=self.agent_id,
-                content=result,
-                message_type="task_result",
+            task_result = await task_queue.submit_task(
+                agent_id=agent_id,
+                description=task_desc,
+                submitted_by=self.agent_id,
+                priority=args.get("priority", "normal"),
+                max_retries=args.get("max_retries", 0),
             )
+
             await self.log_activity(
-                "task_completed",
+                "task_assigned",
                 {
+                    "task_id": task_result.task_id,
                     "agent_id": agent_id,
-                    "agent_name": target.name,
+                    "agent_name": task_result.agent_name,
                     "task": task_desc[:200],
-                    "result_preview": result[:200],
+                    "async": not wait,
                 },
             )
+
+            if wait:
+                # Wait for task completion (with timeout)
+                for _ in range(600):  # 10 min max
+                    if task_result.status.value in ("completed", "failed"):
+                        break
+                    await asyncio.sleep(1)
+
+                return json.dumps(task_result.to_dict())
+
             return json.dumps(
                 {
                     "success": True,
-                    "agent_name": target.name,
-                    "result": result,
+                    "task_id": task_result.task_id,
+                    "agent_name": task_result.agent_name,
+                    "status": "submitted",
+                    "message": f"Task submitted to {task_result.agent_name}. Use get_task_result(task_id='{task_result.task_id}') to check progress.",
                 }
             )
-        except Exception as e:
-            logger.error(f"Task execution failed for {agent_id}: {e}")
+        except ValueError as e:
             return json.dumps({"success": False, "error": str(e)})
+        except Exception as e:
+            logger.error(f"Failed to assign task: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    async def _tool_get_task_result(self, args: dict) -> str:
+        from app.services.task_queue import task_queue
+
+        task_id = args["task_id"]
+        task = task_queue.get_task(task_id)
+        if not task:
+            return json.dumps({"success": False, "error": f"Task '{task_id}' not found."})
+        return json.dumps(task.to_dict())
+
+    async def _tool_list_tasks(self, args: dict) -> str:
+        from app.services.task_queue import task_queue, AsyncTaskStatus
+
+        status_filter = args.get("status")
+        if status_filter:
+            try:
+                status = AsyncTaskStatus(status_filter)
+                tasks = task_queue.get_all_tasks(status=status)
+            except ValueError:
+                tasks = task_queue.get_all_tasks()
+        else:
+            tasks = task_queue.get_all_tasks()
+        return json.dumps({
+            "tasks": tasks,
+            "count": len(tasks),
+            "running": task_queue.get_running_count(),
+        }, indent=2)
 
     async def _tool_check_status(self, _args: dict) -> str:
         from app.services.company_manager import list_companies
@@ -588,21 +915,130 @@ class CEOAgent(BaseAgent):
         except Exception as e:
             return json.dumps({"success": False, "error": str(e)})
 
-    async def run(self, user_input: str) -> str:
-        """Override to track conversation history."""
-        self._conversations.append(
-            {
-                "role": "user",
-                "content": user_input,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
+    async def _tool_schedule_task(self, args: dict) -> str:
+        from app.services.scheduler import scheduler
+
+        interval_hours = float(args.get("interval_hours", 1))
+        interval_seconds = max(300, int(interval_hours * 3600))  # minimum 5 min
+
+        result = await scheduler.add_task(
+            agent_id=args["agent_id"],
+            description=args["description"],
+            interval_seconds=interval_seconds,
+            created_by=self.agent_id,
         )
-        output = await super().run(user_input)
-        self._conversations.append(
-            {
-                "role": "assistant",
-                "content": output,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
-            }
+        await self.log_activity(
+            "task_scheduled",
+            {"task_id": result["task_id"], "agent_id": args["agent_id"],
+             "description": args["description"], "interval_hours": interval_hours},
         )
-        return output
+        return json.dumps({
+            "success": True,
+            "task_id": result["task_id"],
+            "message": f"Scheduled: '{args['description']}' every {interval_hours}h for agent {args['agent_id']}.",
+        })
+
+    async def _tool_list_schedules(self, _args: dict) -> str:
+        from app.services.scheduler import scheduler
+
+        tasks = scheduler.list_tasks()
+        return json.dumps({"schedules": tasks, "count": len(tasks)}, indent=2)
+
+    async def _tool_cancel_schedule(self, args: dict) -> str:
+        from app.services.scheduler import scheduler
+
+        removed = await scheduler.remove_task(args["task_id"])
+        if removed:
+            await self.log_activity("schedule_cancelled", {"task_id": args["task_id"]})
+            return json.dumps({"success": True, "message": f"Schedule {args['task_id']} cancelled."})
+        return json.dumps({"success": False, "error": "Schedule not found."})
+
+    async def _tool_save_agent_template(self, args: dict) -> str:
+        from app.services.agent_templates import template_store
+
+        template = await template_store.save_template(
+            name=args["name"],
+            role=args["role"],
+            instructions=args["instructions"],
+            model_tier=args.get("model_tier", "smart"),
+            sandbox_enabled=args.get("sandbox_enabled", False),
+            browser_enabled=args.get("browser_enabled", False),
+            skills=args.get("skills"),
+            network_enabled=args.get("network_enabled", False),
+        )
+        return json.dumps({"success": True, "template_id": template["id"], "message": f"Template '{args['name']}' saved."})
+
+    async def _tool_list_templates(self, _args: dict) -> str:
+        from app.services.agent_templates import template_store
+
+        templates = await template_store.list_templates()
+        return json.dumps({"templates": [{"id": t["id"], "name": t["name"], "role": t["role"]} for t in templates], "count": len(templates)})
+
+    async def _tool_hire_from_template(self, args: dict) -> str:
+        from app.services.agent_templates import template_store
+
+        template = await template_store.get_template(args["template_id"])
+        if not template:
+            return json.dumps({"success": False, "error": f"Template '{args['template_id']}' not found."})
+
+        hire_args = {
+            "company_id": args["company_id"],
+            "name": args.get("name", template["name"]),
+            "role": template["role"],
+            "instructions": template["instructions"],
+            "model_tier": template.get("model_tier", "smart"),
+            "sandbox_enabled": template.get("sandbox_enabled", False),
+            "browser_enabled": template.get("browser_enabled", False),
+            "skills": template.get("skills"),
+            "network_enabled": template.get("network_enabled", False),
+        }
+        if template.get("model_id"):
+            hire_args["model_id"] = template["model_id"]
+        return await self._tool_hire_agent(hire_args)
+
+    async def run(self, user_input: str, history: list[dict] | None = None) -> str:
+        """Override to track conversation history and pass it to the LLM.
+
+        Uses an asyncio lock to prevent concurrent calls from corrupting history.
+        """
+        async with self._run_lock:
+            # Broadcast typing indicator for dashboard WebSocket
+            await event_bus.broadcast("ceo_typing", {
+                "event": "ceo_typing",
+                "agent_id": self.agent_id,
+                "typing": True,
+            })
+
+            # Load persisted history from Redis on first call
+            await self._load_history()
+
+            self._conversations.append(
+                {
+                    "role": "user",
+                    "content": user_input,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
+            # Pass conversation history so the LLM sees prior turns
+            output = await super().run(user_input, history=self._get_history_messages()[:-1])
+
+            self._conversations.append(
+                {
+                    "role": "assistant",
+                    "content": output,
+                    "timestamp": datetime.now(timezone.utc).isoformat(),
+                }
+            )
+
+            # Persist to Redis
+            await self._save_history()
+
+            # Clear typing indicator
+            await event_bus.broadcast("ceo_typing", {
+                "event": "ceo_typing",
+                "agent_id": self.agent_id,
+                "typing": False,
+            })
+
+            return output

@@ -270,7 +270,12 @@ class TradingAgent(BaseAgent):
         model_id: str | None = None,
         tools: list | None = None,
         company_id: str | None = None,
+        sandbox_enabled: bool = False,
+        browser_enabled: bool = False,
+        skills: list[str] | None = None,
+        network_enabled: bool = False,
     ):
+        # Enable sandbox for analysts (code-based analysis) or if explicitly requested
         super().__init__(
             agent_id=agent_id,
             name=name,
@@ -279,12 +284,18 @@ class TradingAgent(BaseAgent):
             model_tier=model_tier,
             model_id=model_id,
             tools=tools or [],
+            sandbox_enabled=sandbox_enabled or (role == "analyst"),
+            browser_enabled=browser_enabled,
+            skills=skills,
+            company_id=company_id,
         )
-        self.company_id = company_id
+        self.network_enabled = network_enabled
 
     def _get_tools_schema(self) -> list[dict]:
         """Return trading tools based on this agent's role."""
-        return _ROLE_SCHEMAS.get(self.role, RESEARCHER_TOOLS_SCHEMA)
+        schemas = super()._get_tools_schema()  # base tools (sandbox if enabled)
+        schemas.extend(_ROLE_SCHEMAS.get(self.role, RESEARCHER_TOOLS_SCHEMA))
+        return schemas
 
     async def execute_tool(self, tool_name: str, arguments: dict) -> str:
         """Execute trading tools via the trading service."""
@@ -352,7 +363,8 @@ class TradingAgent(BaseAgent):
                         risk_percent=arguments.get("risk_percent", 1.0),
                     )
                 case _:
-                    result = {"error": f"Unknown tool: {tool_name}"}
+                    # Delegate to base class for sandbox/browser tools
+                    return await super().execute_tool(tool_name, arguments)
 
             return json.dumps(result, default=str)
         except Exception as e:

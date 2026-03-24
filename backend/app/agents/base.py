@@ -8,7 +8,6 @@ from langgraph.graph import StateGraph, START, END
 
 from app.db.models import AgentStatus
 from app.services.event_bus import event_bus
-from app.services import llm_router
 
 logger = logging.getLogger(__name__)
 
@@ -45,6 +44,10 @@ class BaseAgent:
         model_tier: str = "smart",
         model_id: str | None = None,
         tools: list | None = None,
+        sandbox_enabled: bool = False,
+        browser_enabled: bool = False,
+        skills: list[str] | None = None,
+        company_id: str | None = None,
     ):
         self.agent_id = agent_id
         self.name = name
@@ -53,6 +56,11 @@ class BaseAgent:
         self.model_tier = model_tier
         self.model_id = model_id  # specific model override
         self.tools = tools or []
+        self.sandbox_enabled = sandbox_enabled
+        self.browser_enabled = browser_enabled
+        self.skills = skills  # list of skill names (None = all enabled)
+        self.company_id = company_id
+        self.network_enabled = False  # set externally
         self._status = AgentStatus.IDLE
         self._paused = asyncio.Event()
         self._paused.set()  # Not paused initially
@@ -162,14 +170,49 @@ class BaseAgent:
             "thinking", {"input": state.get("current_input", "")[:200]}
         )
 
-        messages = [{"role": "system", "content": self.system_prompt}]
+        # Build system prompt with memory context
+        system_content = self.system_prompt
+        if state.get("current_input"):
+            try:
+                from app.services import llm_router as _lr
+                from app.services.memory_service import recall_memories, format_memories_for_prompt
+
+                query_embedding = await _lr.get_embedding(
+                    state["current_input"][:500]
+                )
+                memories = await recall_memories(
+                    self.agent_id, query_embedding, limit=5
+                )
+                mem_block = format_memories_for_prompt(memories)
+                if mem_block:
+                    system_content = f"{self.system_prompt}\n\n{mem_block}"
+            except Exception as e:
+                logger.debug(f"Memory recall skipped: {e}")
+
+        messages = [{"role": "system", "content": system_content}]
         messages.extend(state.get("messages", []))
         if state.get("current_input"):
             messages.append({"role": "user", "content": state["current_input"]})
 
+        # Context window compaction
         try:
-            tools_schema = self._get_tools_schema() if self.tools else None
-            response = await llm_router.chat(
+            from app.services.context_engine import compact_messages
+
+            messages = await compact_messages(
+                messages, tier=self.model_tier
+            )
+        except Exception as e:
+            logger.debug(f"Context compaction skipped: {e}")
+
+        try:
+            tools_schema = self._get_tools_schema() if (self.tools or self.sandbox_enabled or self.browser_enabled or self.skills is not None) else None
+            if tools_schema is not None and len(tools_schema) == 0:
+                tools_schema = None
+
+            # Use enhanced failover service
+            from app.services.model_failover import failover_service
+
+            response = await failover_service.chat_with_failover(
                 messages=messages,
                 tier=self.model_tier,
                 tools=tools_schema,
@@ -243,12 +286,27 @@ class BaseAgent:
 
             await self.log_activity("tool_call", {"tool": tool_name, "args": tool_args})
 
+            import time as _time
+            _t0 = _time.perf_counter()
             try:
                 result = await self.execute_tool(tool_name, tool_args)
+                _dur = (_time.perf_counter() - _t0) * 1000
                 tool_results.append({"tool": tool_name, "result": result})
+                # Record analytics
+                try:
+                    from app.services.tool_analytics import tool_analytics
+                    tool_analytics.record(tool_name, self.agent_id, self.name, True, _dur)
+                except Exception:
+                    pass
             except Exception as e:
+                _dur = (_time.perf_counter() - _t0) * 1000
                 logger.error(f"Tool {tool_name} failed: {e}")
                 tool_results.append({"tool": tool_name, "error": str(e)})
+                try:
+                    from app.services.tool_analytics import tool_analytics
+                    tool_analytics.record(tool_name, self.agent_id, self.name, False, _dur, str(e))
+                except Exception:
+                    pass
 
         # Add tool results as messages for next think cycle
         new_messages = list(state.get("messages", []))
@@ -277,13 +335,371 @@ class BaseAgent:
 
     # --- Tool execution (override in subclasses) ---
 
+    _BROWSER_TOOLS = {"browse_url", "screenshot_url"}
+    _SANDBOX_TOOLS = {"execute_code"}
+
     def _get_tools_schema(self) -> list[dict]:
         """Return OpenAI-format tool schemas. Override in subclass."""
-        return []
+        schemas: list[dict] = []
+        if self.sandbox_enabled:
+            from app.tools.agent_tools import SANDBOX_TOOLS_SCHEMA
+            schemas.extend(SANDBOX_TOOLS_SCHEMA)
+        if self.browser_enabled:
+            from app.tools.agent_tools import BROWSER_TOOLS_SCHEMA
+            schemas.extend(BROWSER_TOOLS_SCHEMA)
+        # Agent-to-agent messaging (available to all agents)
+        schemas.append({
+            "type": "function",
+            "function": {
+                "name": "message_agent",
+                "description": "Send a message to another agent and get their response. Use this to collaborate with other agents.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {"type": "string", "description": "ID of the agent to message"},
+                        "message": {"type": "string", "description": "The message to send"},
+                    },
+                    "required": ["agent_id", "message"],
+                },
+            },
+        })
+        # Proactive reporting to CEO
+        schemas.append({
+            "type": "function",
+            "function": {
+                "name": "report_to_ceo",
+                "description": "Send a proactive report or finding to the CEO. Use this when you discover something important, complete a significant task, or encounter a problem that needs attention. The CEO will be notified.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "title": {"type": "string", "description": "Brief report title"},
+                        "content": {"type": "string", "description": "Report content with your findings, results, or concerns"},
+                        "priority": {
+                            "type": "string",
+                            "enum": ["low", "medium", "high", "critical"],
+                            "description": "Priority level (default: medium)",
+                        },
+                    },
+                    "required": ["title", "content"],
+                },
+            },
+        })
+        # Workspace tools (available if agent belongs to a company)
+        if self.company_id:
+            schemas.extend([
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "workspace_write",
+                        "description": "Write a file to the shared company workspace. Other agents in the same company can read it.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "filename": {"type": "string", "description": "Name of the file to write"},
+                                "content": {"type": "string", "description": "File content"},
+                            },
+                            "required": ["filename", "content"],
+                        },
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "workspace_read",
+                        "description": "Read a file from the shared company workspace.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "filename": {"type": "string", "description": "Name of the file to read"},
+                            },
+                            "required": ["filename"],
+                        },
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "workspace_list",
+                        "description": "List all files in the shared company workspace.",
+                        "parameters": {"type": "object", "properties": {}},
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "memory_store",
+                        "description": "Store a piece of knowledge in the shared company memory. Other agents in the same company can search and retrieve it later. Use for insights, findings, decisions, or any reusable knowledge.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "content": {"type": "string", "description": "The knowledge or insight to store"},
+                                "category": {
+                                    "type": "string",
+                                    "enum": ["insight", "finding", "decision", "data", "error"],
+                                    "description": "Category of memory (default: insight)",
+                                },
+                                "importance": {
+                                    "type": "number",
+                                    "description": "Importance score 0.0-1.0 (default: 0.5). Higher = retained longer.",
+                                },
+                            },
+                            "required": ["content"],
+                        },
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "memory_query",
+                        "description": "Search the shared company memory for relevant knowledge. Returns semantically similar memories stored by any agent in this company.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "query": {"type": "string", "description": "What to search for in company memory"},
+                                "limit": {"type": "integer", "description": "Max results (default: 5)"},
+                            },
+                            "required": ["query"],
+                        },
+                    },
+                },
+            ])
+            # Artifact tools
+            schemas.extend([
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "create_artifact",
+                        "description": "Create a structured deliverable (report, dataset, analysis, etc.) in the company workspace. Artifacts are persisted and tracked with metadata.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "name": {"type": "string", "description": "Artifact name/title"},
+                                "content": {"type": "string", "description": "The artifact content"},
+                                "artifact_type": {
+                                    "type": "string",
+                                    "enum": ["report", "dataset", "analysis", "summary", "code", "chart"],
+                                    "description": "Type of artifact (default: report)",
+                                },
+                                "format": {
+                                    "type": "string",
+                                    "enum": ["markdown", "json", "csv", "html", "text"],
+                                    "description": "Content format (default: markdown)",
+                                },
+                                "description": {"type": "string", "description": "Brief description of the artifact"},
+                            },
+                            "required": ["name", "content"],
+                        },
+                    },
+                },
+                {
+                    "type": "function",
+                    "function": {
+                        "name": "list_artifacts",
+                        "description": "List all artifacts in the company workspace, optionally filtered by type.",
+                        "parameters": {
+                            "type": "object",
+                            "properties": {
+                                "artifact_type": {
+                                    "type": "string",
+                                    "enum": ["report", "dataset", "analysis", "summary", "code", "chart"],
+                                    "description": "Filter by artifact type (optional)",
+                                },
+                            },
+                        },
+                    },
+                },
+            ])
+        # Add skill tools
+        from app.skills.registry import skill_registry
+        schemas.extend(skill_registry.get_tool_schemas(self.skills))
+        return schemas
 
     async def execute_tool(self, tool_name: str, arguments: dict) -> str:
         """Execute a tool by name. Override in subclass to add tools."""
+        if tool_name in self._BROWSER_TOOLS and self.browser_enabled:
+            from app.tools.agent_tools import execute_browser_tool
+            return await execute_browser_tool(tool_name, arguments)
+        if tool_name in self._SANDBOX_TOOLS and self.sandbox_enabled:
+            from app.tools.agent_tools import execute_sandbox_tool
+            return await execute_sandbox_tool(tool_name, arguments, network_enabled=getattr(self, 'network_enabled', False))
+        if tool_name == "message_agent":
+            return await self._tool_message_agent(arguments)
+        if tool_name == "report_to_ceo":
+            return await self._tool_report_to_ceo(arguments)
+        if tool_name in ("workspace_write", "workspace_read", "workspace_list"):
+            return await self._tool_workspace(tool_name, arguments)
+        if tool_name in ("memory_store", "memory_query"):
+            return await self._tool_company_memory(tool_name, arguments)
+        if tool_name in ("create_artifact", "list_artifacts"):
+            return await self._tool_artifact(tool_name, arguments)
+        # Try skill registry
+        from app.skills.registry import skill_registry
+        result = await skill_registry.execute_tool(tool_name, arguments)
+        if result is not None:
+            return result
         return f"Unknown tool: {tool_name}"
+
+    async def _tool_message_agent(self, args: dict) -> str:
+        """Send a message to another agent and return their response."""
+        import json as _json
+        from app.agents.registry import registry
+        from app.services.messaging import send_message
+
+        target_id = args["agent_id"]
+        target = registry.get(target_id)
+        if not target:
+            return _json.dumps({"success": False, "error": f"Agent {target_id} not found."})
+
+        msg_content = args["message"]
+        await send_message(self.agent_id, target_id, msg_content, "chat")
+
+        try:
+            response = await target.run(msg_content)
+            await send_message(target_id, self.agent_id, response, "chat")
+            return _json.dumps({"success": True, "agent_name": target.name, "response": response})
+        except Exception as e:
+            return _json.dumps({"success": False, "error": str(e)})
+
+    async def _tool_report_to_ceo(self, args: dict) -> str:
+        """Send a proactive report to the CEO and broadcast to dashboard."""
+        import json as _json
+        from app.services.messaging import send_message
+        from app.services.event_bus import event_bus
+
+        title = args.get("title", "Report")
+        content = args.get("content", "")
+        priority = args.get("priority", "medium")
+
+        report_content = f"**[{priority.upper()}] {title}**\n\nFrom: {self.name} ({self.role})\n\n{content}"
+
+        # Store as a message to CEO (to_agent_id=None means Owner/CEO)
+        await send_message(
+            from_agent_id=self.agent_id,
+            to_agent_id=None,
+            content=report_content,
+            message_type="report",
+            metadata={"priority": priority, "title": title, "agent_name": self.name},
+        )
+
+        # Broadcast to dashboard for real-time notification
+        await event_bus.broadcast(
+            "agent_report",
+            {
+                "agent_id": self.agent_id,
+                "agent_name": self.name,
+                "title": title,
+                "content": content[:500],
+                "priority": priority,
+            },
+            agent_id=self.agent_id,
+        )
+
+        return _json.dumps({
+            "success": True,
+            "message": f"Report '{title}' sent to CEO with priority {priority}.",
+        })
+
+    async def _tool_workspace(self, tool_name: str, args: dict) -> str:
+        """Handle shared company workspace operations."""
+        import json as _json
+        from app.services.workspace import write_file, read_file, list_files
+
+        if not self.company_id:
+            return _json.dumps({"success": False, "error": "Agent has no company workspace."})
+
+        if tool_name == "workspace_write":
+            result = write_file(self.company_id, args["filename"], args["content"])
+        elif tool_name == "workspace_read":
+            result = read_file(self.company_id, args["filename"])
+        elif tool_name == "workspace_list":
+            result = list_files(self.company_id)
+        else:
+            result = {"success": False, "error": f"Unknown workspace tool: {tool_name}"}
+        return _json.dumps(result)
+
+    async def _tool_company_memory(self, tool_name: str, args: dict) -> str:
+        """Handle shared company memory store/query operations."""
+        import json as _json
+
+        if not self.company_id:
+            return _json.dumps({"success": False, "error": "Agent has no company."})
+
+        if tool_name == "memory_store":
+            content = args.get("content", "")
+            category = args.get("category", "insight")
+            importance = min(max(args.get("importance", 0.5), 0.0), 1.0)
+
+            # Generate embedding
+            try:
+                from app.services.memory_service import store_memory
+                from app.services.llm_router import get_embedding
+                embedding = await get_embedding(content)
+            except Exception:
+                # Fallback: zero vector (still stores, just not searchable)
+                embedding = [0.0] * 768
+
+            from app.services.company_memory import store_company_memory
+            memory_id = await store_company_memory(
+                company_id=self.company_id,
+                agent_id=self.agent_id,
+                content=content,
+                embedding=embedding,
+                importance=importance,
+                category=category,
+            )
+            return _json.dumps({"success": True, "memory_id": memory_id})
+
+        elif tool_name == "memory_query":
+            query = args.get("query", "")
+            limit = min(max(args.get("limit", 5), 1), 20)
+
+            try:
+                from app.services.llm_router import get_embedding
+                query_embedding = await get_embedding(query)
+            except Exception:
+                return _json.dumps({"success": False, "error": "Could not generate query embedding."})
+
+            from app.services.company_memory import recall_company_memories
+            memories = await recall_company_memories(
+                company_id=self.company_id,
+                query_embedding=query_embedding,
+                limit=limit,
+            )
+            return _json.dumps({"success": True, "memories": memories, "count": len(memories)})
+
+        return _json.dumps({"success": False, "error": f"Unknown memory tool: {tool_name}"})
+
+    async def _tool_artifact(self, tool_name: str, args: dict) -> str:
+        """Handle structured artifact creation and listing."""
+        import json as _json
+
+        if not self.company_id:
+            return _json.dumps({"success": False, "error": "Agent has no company."})
+
+        if tool_name == "create_artifact":
+            from app.services.artifact_service import create_artifact
+            artifact = create_artifact(
+                company_id=self.company_id,
+                agent_id=self.agent_id,
+                agent_name=self.name,
+                name=args["name"],
+                content=args["content"],
+                artifact_type=args.get("artifact_type", "report"),
+                format=args.get("format", "markdown"),
+                description=args.get("description", ""),
+            )
+            return _json.dumps({"success": True, "artifact": artifact})
+
+        elif tool_name == "list_artifacts":
+            from app.services.artifact_service import list_artifacts
+            artifacts = list_artifacts(
+                company_id=self.company_id,
+                artifact_type=args.get("artifact_type"),
+                agent_id=None,
+            )
+            return _json.dumps({"artifacts": artifacts, "count": len(artifacts)})
+
+        return _json.dumps({"success": False, "error": f"Unknown artifact tool: {tool_name}"})
 
     def _parse_tool_call(self, tc) -> dict:
         """Parse a tool call from LiteLLM response format."""
@@ -301,13 +717,25 @@ class BaseAgent:
 
     # --- Main execution ---
 
-    async def run(self, user_input: str) -> str:
-        """Run the agent with a user input. Returns the final output."""
+    async def run(self, user_input: str, history: list[dict] | None = None) -> str:
+        """Run the agent with a user input. Returns the final output.
+
+        Args:
+            user_input: The current user message.
+            history: Optional prior conversation messages (role/content dicts)
+                     to include before the current input.
+        """
         if self._stopped:
             return "Agent is stopped. Start it first."
 
+        # Rate limiting check
+        from app.services.rate_limiter import rate_limiter
+        allowed, reason = await rate_limiter.check(self.agent_id)
+        if not allowed:
+            return f"Rate limited: {reason}. Please wait before retrying."
+
         initial_state: AgentState = {
-            "messages": [],
+            "messages": history or [],
             "current_input": user_input,
             "output": "",
             "tool_calls": [],
@@ -317,6 +745,9 @@ class BaseAgent:
             "error": None,
         }
 
+        import time as _time
+        _start = _time.monotonic()
+
         try:
             result = await self._graph.ainvoke(
                 initial_state,
@@ -325,14 +756,55 @@ class BaseAgent:
             await self._set_status(AgentStatus.IDLE)
 
             output = result.get("output", "")
-            if result.get("error"):
+            _elapsed = _time.monotonic() - _start
+            has_error = bool(result.get("error"))
+            if has_error:
                 output = f"Error: {result['error']}"
                 await self._set_status(AgentStatus.ERROR)
 
             await self.log_activity("completed", {"output": output[:500]})
+
+            # Record performance
+            try:
+                from app.services.performance_tracker import performance_tracker
+                await performance_tracker.record_task(
+                    agent_id=self.agent_id,
+                    success=not has_error,
+                    response_time_s=_elapsed,
+                )
+            except Exception:
+                pass
+
+            # Auto-capture memory of the interaction
+            if output and not result.get("error"):
+                try:
+                    from app.services import llm_router as _lr
+                    from app.services.memory_service import store_memory
+
+                    summary = f"Task: {user_input[:200]} → Result: {output[:300]}"
+                    embedding = await _lr.get_embedding(summary)
+                    await store_memory(
+                        agent_id=self.agent_id,
+                        content=summary,
+                        embedding=embedding,
+                        importance=0.5,
+                        category="conversation",
+                    )
+                except Exception as e:
+                    logger.debug(f"Memory capture skipped: {e}")
+
             return output
         except Exception as e:
             logger.error(f"Agent {self.name} run error: {e}")
             await self._set_status(AgentStatus.ERROR)
             await self.log_activity("error", {"error": str(e)}, level="error")
+            # Record failure in performance tracker
+            try:
+                _elapsed = _time.monotonic() - _start
+                from app.services.performance_tracker import performance_tracker
+                await performance_tracker.record_task(
+                    agent_id=self.agent_id, success=False, response_time_s=_elapsed
+                )
+            except Exception:
+                pass
             return f"Agent error: {e}"

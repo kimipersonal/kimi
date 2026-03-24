@@ -37,7 +37,9 @@ COMPANY_TEMPLATES: dict[str, dict] = {
                     "and flagging notable price movements or news events. "
                     "Report findings clearly and concisely to the CEO."
                 ),
-                "tools": ["search_market_news", "get_price_data"],
+                "tools": [],
+                "skills": ["web_search", "news_feed"],
+                "browser_enabled": True,
             },
             {
                 "name": "Trading Analyst",
@@ -49,7 +51,9 @@ COMPANY_TEMPLATES: dict[str, dict] = {
                     "and produce actionable trade recommendations with entry/exit points "
                     "and position sizing. Always include risk assessment."
                 ),
-                "tools": ["analyse_chart", "backtest_strategy"],
+                "tools": [],
+                "skills": ["web_search", "datetime_utils"],
+                "sandbox_enabled": True,
             },
             {
                 "name": "Risk Manager",
@@ -61,7 +65,8 @@ COMPANY_TEMPLATES: dict[str, dict] = {
                     "diversification. Approve or reject trades with clear reasoning. "
                     "Monitor open positions and flag any that exceed risk thresholds."
                 ),
-                "tools": ["check_portfolio_risk", "calculate_position_size"],
+                "tools": [],
+                "skills": ["datetime_utils"],
             },
         ],
     },
@@ -77,7 +82,10 @@ COMPANY_TEMPLATES: dict[str, dict] = {
                     "delegate sub-tasks to assistants, synthesise findings into reports, "
                     "and present conclusions to the CEO."
                 ),
-                "tools": ["web_search", "summarise_document"],
+                "tools": [],
+                "skills": ["web_search", "news_feed", "file_ops"],
+                "browser_enabled": True,
+                "sandbox_enabled": True,
             },
             {
                 "name": "Data Collector",
@@ -88,7 +96,9 @@ COMPANY_TEMPLATES: dict[str, dict] = {
                     "by the Lead Researcher. Clean and structure data for analysis. "
                     "Report raw findings faithfully."
                 ),
-                "tools": ["web_search", "scrape_data"],
+                "tools": [],
+                "skills": ["web_search", "news_feed"],
+                "browser_enabled": True,
             },
         ],
     },
@@ -104,7 +114,9 @@ COMPANY_TEMPLATES: dict[str, dict] = {
                     "and marketing campaigns based on briefs from the CEO. "
                     "Ensure brand consistency and audience engagement."
                 ),
-                "tools": ["generate_content", "check_seo"],
+                "tools": [],
+                "skills": ["web_search", "file_ops"],
+                "browser_enabled": True,
             },
             {
                 "name": "Analytics Specialist",
@@ -114,7 +126,9 @@ COMPANY_TEMPLATES: dict[str, dict] = {
                     "You are an Analytics Specialist. Track campaign performance, "
                     "analyse engagement metrics, and produce reports with actionable insights."
                 ),
-                "tools": ["get_analytics", "generate_report"],
+                "tools": [],
+                "skills": ["web_search", "datetime_utils"],
+                "sandbox_enabled": True,
             },
         ],
     },
@@ -134,7 +148,10 @@ COMPANY_TEMPLATES: dict[str, dict] = {
                     "identify patterns, create visualisations, and provide data-driven "
                     "recommendations to the CEO."
                 ),
-                "tools": ["query_data", "generate_chart"],
+                "tools": [],
+                "skills": ["web_search", "datetime_utils", "file_ops"],
+                "sandbox_enabled": True,
+                "browser_enabled": True,
             },
         ],
     },
@@ -181,6 +198,9 @@ async def create_company(
                 system_prompt=agent_def["system_prompt"],
                 tools=agent_def.get("tools", []),
                 company_id=company_id,
+                sandbox_enabled=agent_def.get("sandbox_enabled", False),
+                browser_enabled=agent_def.get("browser_enabled", False),
+                skills=agent_def.get("skills"),
             )
             created_agents.append(agent_info)
 
@@ -205,6 +225,11 @@ async def create_agent(
     system_prompt: str = "",
     tools: list[str] | None = None,
     company_id: str | None = None,
+    sandbox_enabled: bool = False,
+    browser_enabled: bool = False,
+    skills: list[str] | None = None,
+    network_enabled: bool = False,
+    few_shot_examples: list[dict] | None = None,
 ) -> dict:
     """Create an agent in DB and register it as a live runtime instance."""
     agent_id = str(uuid4())
@@ -213,6 +238,13 @@ async def create_agent(
     if not system_prompt:
         system_prompt = f"You are {name}, a {role}. Follow instructions from the CEO."
 
+    # Inject few-shot examples into system prompt
+    if few_shot_examples:
+        examples_block = "\n\nFEW-SHOT EXAMPLES (follow this style):\n"
+        for i, ex in enumerate(few_shot_examples[:10], 1):  # cap at 10
+            examples_block += f"\nExample {i}:\nUser: {ex.get('input', '')}\nAssistant: {ex.get('output', '')}\n"
+        system_prompt = system_prompt + examples_block
+
     # Map string tier to enum
     tier_map = {
         "fast": ModelTier.FAST,
@@ -220,6 +252,15 @@ async def create_agent(
         "reasoning": ModelTier.REASONING,
     }
     db_tier = tier_map.get(model_tier, ModelTier.SMART)
+
+    # Build config dict for capabilities
+    agent_config: dict = {
+        "sandbox_enabled": sandbox_enabled,
+        "browser_enabled": browser_enabled,
+        "network_enabled": network_enabled,
+    }
+    if skills is not None:
+        agent_config["skills"] = skills
 
     # Save to DB
     async with async_session() as session:
@@ -232,6 +273,7 @@ async def create_agent(
             system_prompt=system_prompt,
             tools=tools,
             company_id=company_id,
+            config=agent_config,
         )
         session.add(db_agent)
         await session.commit()
@@ -251,6 +293,10 @@ async def create_agent(
             model_id=model_id,
             tools=tools,
             company_id=company_id,
+            sandbox_enabled=sandbox_enabled,
+            browser_enabled=browser_enabled,
+            skills=skills,
+            network_enabled=network_enabled,
         )
     else:
         live_agent = BaseAgent(
@@ -261,7 +307,12 @@ async def create_agent(
             model_tier=model_tier,
             model_id=model_id,
             tools=tools,
+            sandbox_enabled=sandbox_enabled,
+            browser_enabled=browser_enabled,
+            skills=skills,
+            company_id=company_id,
         )
+        live_agent.network_enabled = network_enabled
     registry.register(live_agent)
     await live_agent.start()
 
@@ -273,6 +324,10 @@ async def create_agent(
         "model_id": model_id,
         "company_id": company_id,
         "status": "idle",
+        "sandbox_enabled": sandbox_enabled,
+        "browser_enabled": browser_enabled,
+        "skills": skills,
+        "network_enabled": network_enabled,
     }
 
     await event_bus.broadcast("agent_hired", info, agent_id=agent_id)
@@ -376,6 +431,7 @@ async def restore_agents_from_db() -> int:
 
         from app.agents.trading import TRADING_ROLES, TradingAgent
 
+        agent_config = db_agent.config or {}
         live_agent: BaseAgent
         if db_agent.role in TRADING_ROLES:
             live_agent = TradingAgent(
@@ -395,7 +451,12 @@ async def restore_agents_from_db() -> int:
                 system_prompt=db_agent.system_prompt,
                 model_tier=db_agent.model_tier.value,
                 tools=db_agent.tools or [],
+                sandbox_enabled=agent_config.get("sandbox_enabled", False),
+                browser_enabled=agent_config.get("browser_enabled", False),
+                skills=agent_config.get("skills"),
+                company_id=db_agent.company_id,
             )
+            live_agent.network_enabled = agent_config.get("network_enabled", False)
         registry.register(live_agent)
         if db_agent.status not in (AgentStatus.STOPPED, AgentStatus.ERROR):
             await live_agent.start()
