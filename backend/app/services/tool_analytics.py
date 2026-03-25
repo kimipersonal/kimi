@@ -1,11 +1,14 @@
 """Tool Usage Analytics — track tool calls, success/fail rates, and timing per agent."""
 
+import json
 import logging
 import time
 from collections import defaultdict
 from dataclasses import dataclass, field
 
 logger = logging.getLogger(__name__)
+
+_REDIS_KEY = "tool_analytics:counters"
 
 
 @dataclass
@@ -73,6 +76,11 @@ class ToolAnalytics:
         self._tool_total_ms[tool_name] += duration_ms
         self._agent_tool_counts[agent_id][tool_name] += 1
 
+        # Periodically persist counters to Redis (every 50 calls)
+        total = sum(self._tool_counts.values())
+        if total % 50 == 0:
+            self._save_to_redis()
+
     def get_stats(self) -> dict:
         """Get aggregated tool usage statistics."""
         tool_stats = {}
@@ -128,6 +136,54 @@ class ToolAnalytics:
         self._tool_failures.clear()
         self._tool_total_ms.clear()
         self._agent_tool_counts.clear()
+
+    def _save_to_redis(self) -> None:
+        """Persist aggregated counters to Redis (sync, fire-and-forget)."""
+        try:
+            import redis
+            from app.config import get_settings
+
+            data = {
+                "tool_counts": dict(self._tool_counts),
+                "tool_successes": dict(self._tool_successes),
+                "tool_failures": dict(self._tool_failures),
+                "tool_total_ms": dict(self._tool_total_ms),
+                "agent_tool_counts": {
+                    aid: dict(tc) for aid, tc in self._agent_tool_counts.items()
+                },
+            }
+            r = redis.from_url(get_settings().redis_url, decode_responses=True)
+            r.set(_REDIS_KEY, json.dumps(data), ex=86400 * 30)  # 30d TTL
+            r.close()
+        except Exception as e:
+            logger.debug(f"Could not save tool analytics to Redis: {e}")
+
+    def load_from_redis(self) -> None:
+        """Load aggregated counters from Redis on startup."""
+        try:
+            import redis
+            from app.config import get_settings
+
+            r = redis.from_url(get_settings().redis_url, decode_responses=True)
+            raw = r.get(_REDIS_KEY)
+            r.close()
+            if not raw:
+                return
+            data = json.loads(raw)
+            for k, v in data.get("tool_counts", {}).items():
+                self._tool_counts[k] = v
+            for k, v in data.get("tool_successes", {}).items():
+                self._tool_successes[k] = v
+            for k, v in data.get("tool_failures", {}).items():
+                self._tool_failures[k] = v
+            for k, v in data.get("tool_total_ms", {}).items():
+                self._tool_total_ms[k] = v
+            for aid, tc in data.get("agent_tool_counts", {}).items():
+                for k, v in tc.items():
+                    self._agent_tool_counts[aid][k] = v
+            logger.info(f"Loaded tool analytics from Redis ({sum(self._tool_counts.values())} total calls)")
+        except Exception as e:
+            logger.debug(f"Could not load tool analytics from Redis: {e}")
 
 
 # Singleton

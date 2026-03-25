@@ -6,6 +6,7 @@ from uuid import uuid4
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Enum,
     Float,
@@ -333,4 +334,20 @@ class AgentMemory(Base):
 
     __table_args__ = (
         Index("ix_agent_memories_agent_category", "agent_id", "category"),
+    )
+
+
+class AuditLogEntry(Base):
+    __tablename__ = "audit_log_entries"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    agent_id: Mapped[str] = mapped_column(String(36), nullable=False, index=True)
+    agent_name: Mapped[str] = mapped_column(String(100), nullable=False)
+    action: Mapped[str] = mapped_column(String(100), nullable=False)
+    arguments: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    result_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    success: Mapped[bool] = mapped_column(Boolean, default=True)
+    source: Mapped[str] = mapped_column(String(50), default="tool_call")
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
     )

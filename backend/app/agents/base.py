@@ -100,7 +100,7 @@ class BaseAgent:
     async def log_activity(
         self, action: str, details: dict | None = None, level: str = "info"
     ):
-        """Log an activity and broadcast to dashboard."""
+        """Log an activity, persist to DB, and broadcast to dashboard."""
         await event_bus.broadcast(
             "log",
             {
@@ -112,6 +112,22 @@ class BaseAgent:
             },
             agent_id=self.agent_id,
         )
+        # Persist to PostgreSQL (fire-and-forget, non-blocking)
+        try:
+            from app.db.database import async_session
+            from app.db.models import ActivityLog
+
+            async with async_session() as session:
+                log_entry = ActivityLog(
+                    agent_id=self.agent_id,
+                    action=action[:100],
+                    details=details,
+                    level=level,
+                )
+                session.add(log_entry)
+                await session.commit()
+        except Exception as e:
+            logger.debug(f"Could not persist activity log: {e}")
 
     # --- Controls ---
 

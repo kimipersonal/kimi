@@ -81,6 +81,26 @@ class AuditLog:
         self._entries.append(asdict(entry))
         await self._persist()
 
+        # Persist to PostgreSQL (permanent record)
+        try:
+            from app.db.database import async_session
+            from app.db.models import AuditLogEntry
+
+            async with async_session() as session:
+                db_entry = AuditLogEntry(
+                    agent_id=entry.agent_id,
+                    agent_name=entry.agent_name,
+                    action=entry.action,
+                    arguments=entry.arguments,
+                    result_summary=entry.result_summary,
+                    success=entry.success,
+                    source=entry.source,
+                )
+                session.add(db_entry)
+                await session.commit()
+        except Exception as e:
+            logger.debug(f"Could not persist audit entry to DB: {e}")
+
     async def _persist(self) -> None:
         """Save entries to Redis."""
         try:

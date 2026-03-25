@@ -255,6 +255,24 @@ class CostTracker:
         await self._save_to_redis()
         await self._increment_lifetime(cost, input_tokens + output_tokens)
 
+        # Persist to PostgreSQL (permanent record)
+        try:
+            from app.db.database import async_session
+            from app.db.models import CostRecord
+
+            async with async_session() as session:
+                db_record = CostRecord(
+                    agent_id=agent_id,
+                    model=model,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens,
+                    cost_usd=cost,
+                )
+                session.add(db_record)
+                await session.commit()
+        except Exception as e:
+            logger.debug(f"Could not persist cost record to DB: {e}")
+
     @staticmethod
     def _is_today(ts: datetime, today) -> bool:
         return ts.date() == today

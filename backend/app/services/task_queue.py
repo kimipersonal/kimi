@@ -290,6 +290,34 @@ class TaskQueue:
         """Count currently running tasks."""
         return len(self._running)
 
+    async def recover_orphaned_tasks(self) -> int:
+        """Mark IN_PROGRESS tasks in DB as FAILED on startup (they were lost on restart)."""
+        try:
+            from app.db.database import async_session
+            from app.db.models import Task as TaskModel, TaskStatus
+            from sqlalchemy import update
+
+            async with async_session() as session:
+                stmt = (
+                    update(TaskModel)
+                    .where(TaskModel.status == TaskStatus.IN_PROGRESS)
+                    .values(
+                        status=TaskStatus.FAILED,
+                        output_data={"error": "Lost on service restart", "recovered": True},
+                    )
+                    .returning(TaskModel.id)
+                )
+                result = await session.execute(stmt)
+                orphaned_ids = result.scalars().all()
+                await session.commit()
+                count = len(orphaned_ids)
+                if count:
+                    logger.warning(f"Recovered {count} orphaned task(s) — marked FAILED")
+                return count
+        except Exception as e:
+            logger.error(f"Could not recover orphaned tasks: {e}")
+            return 0
+
 
 # Singleton
 task_queue = TaskQueue()

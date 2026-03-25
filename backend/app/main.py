@@ -2,6 +2,7 @@
 
 import asyncio
 import logging
+import logging.handlers
 import os
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -15,10 +16,25 @@ from app.agents.ceo import CEOAgent
 from app.agents.registry import registry
 from app.api import agents, companies, dashboard, skills, trading, websocket, webhooks
 
+# Ensure logs directory exists
+_log_dir = Path(__file__).resolve().parents[1] / "logs"
+_log_dir.mkdir(exist_ok=True)
+
+# Configure root logger with console + rotating file handler
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s | %(name)-25s | %(levelname)-7s | %(message)s",
 )
+_file_handler = logging.handlers.RotatingFileHandler(
+    _log_dir / "backend.log",
+    maxBytes=10 * 1024 * 1024,  # 10 MB
+    backupCount=5,
+    encoding="utf-8",
+)
+_file_handler.setFormatter(
+    logging.Formatter("%(asctime)s | %(name)-25s | %(levelname)-7s | %(message)s")
+)
+logging.getLogger().addHandler(_file_handler)
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -134,6 +150,13 @@ async def lifespan(app: FastAPI):
     if restored:
         logger.info(f"Restored {restored} agent(s) from database")
 
+    # Recover orphaned tasks from previous runs
+    from app.services.task_queue import task_queue
+
+    orphaned = await task_queue.recover_orphaned_tasks()
+    if orphaned:
+        logger.info(f"Recovered {orphaned} orphaned task(s)")
+
     # Start Telegram bot
     from app.services.telegram_bot import telegram_bot
 
@@ -158,6 +181,11 @@ async def lifespan(app: FastAPI):
     from app.services.agent_watchdog import agent_watchdog
 
     await agent_watchdog.start()
+
+    # Load tool analytics from Redis
+    from app.services.tool_analytics import tool_analytics
+
+    tool_analytics.load_from_redis()
 
     # Schedule recurring background tasks
     async def _approval_expiry_loop():
