@@ -2,8 +2,8 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { useWS } from '@/hooks/WSContext'
-
-const API = process.env.NEXT_PUBLIC_API_URL || ''
+import { api } from '@/lib/api'
+import { ErrorBanner } from '@/components/ui/ErrorBanner'
 
 interface Account {
   platform: string
@@ -72,22 +72,15 @@ export default function TradingPage() {
   const [signals, setSignals] = useState<Signal[]>([])
   const [history, setHistory] = useState<TradeHistory[]>([])
   const [loading, setLoading] = useState(true)
+  const [errors, setErrors] = useState<string[]>([])
 
   const load = useCallback(async () => {
-    try {
-      const [p, s, h] = await Promise.all([
-        fetch(`${API}/api/trading/portfolio`).then(r => r.json()),
-        fetch(`${API}/api/trading/signals?limit=20`).then(r => r.json()),
-        fetch(`${API}/api/trading/history?limit=20`).then(r => r.json()),
-      ])
-      setPortfolio(p)
-      setSignals(s)
-      setHistory(h)
-    } catch (e) {
-      console.error('Failed to load trading data:', e)
-    } finally {
-      setLoading(false)
-    }
+    const errs: string[] = []
+    try { setPortfolio(await api.getPortfolio()) } catch { errs.push('portfolio') }
+    try { setSignals(await api.getTradeSignals(20)) } catch { errs.push('signals') }
+    try { setHistory(await api.getTradeHistory(20)) } catch { errs.push('history') }
+    setErrors(errs)
+    setLoading(false)
   }, [])
 
   useEffect(() => { load() }, [load])
@@ -99,11 +92,7 @@ export default function TradingPage() {
   }, [lastEvent, load])
 
   const decideSignal = async (signalId: string, approved: boolean, reason?: string) => {
-    await fetch(`${API}/api/trading/signals/${signalId}/decide`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ approved, reason }),
-    })
+    await api.decideSignal(signalId, approved, reason)
     load()
   }
 
@@ -132,6 +121,13 @@ export default function TradingPage() {
           Refresh
         </button>
       </div>
+
+      {errors.length > 0 && (
+        <ErrorBanner
+          message={`Failed to load: ${errors.join(', ')}`}
+          onRetry={load}
+        />
+      )}
 
       {portfolio?.error ? (
         <div className="p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-lg text-sm">

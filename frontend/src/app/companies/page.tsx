@@ -5,6 +5,8 @@ import { useWS } from '@/hooks/WSContext'
 import { api } from '@/lib/api'
 import type { Company } from '@/lib/api'
 import { Building2 } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { ErrorBanner } from '@/components/ui/ErrorBanner'
 
 const TYPE_ICONS: Record<string, string> = {
   trading: '📈',
@@ -17,12 +19,17 @@ const TYPE_ICONS: Record<string, string> = {
 export default function CompaniesPage() {
   const { events } = useWS()
   const [companies, setCompanies] = useState<Company[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
+    setError(null)
     try {
       setCompanies(await api.getCompanies())
-    } catch (err) {
-      console.error('Failed to fetch companies:', err)
+    } catch {
+      setError('Failed to load companies')
+    } finally {
+      setLoading(false)
     }
   }, [])
 
@@ -37,6 +44,8 @@ export default function CompaniesPage() {
     }
   }, [events, refresh])
 
+  if (loading) return <LoadingSpinner message="Loading companies..." />
+
   return (
     <div className="space-y-6 max-w-7xl">
       <div className="flex items-center justify-between">
@@ -44,7 +53,9 @@ export default function CompaniesPage() {
         <span className="text-sm text-[var(--text-secondary)]">{companies.length} companies</span>
       </div>
 
-      {companies.length === 0 ? (
+      {error && <ErrorBanner message={error} onRetry={refresh} />}
+
+      {!error && companies.length === 0 ? (
         <div className="text-center py-16 text-[var(--text-secondary)]">
           <Building2 size={40} className="mx-auto mb-3 opacity-40" />
           <p className="text-lg mb-2">No companies yet</p>

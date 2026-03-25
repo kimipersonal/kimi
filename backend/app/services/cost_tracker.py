@@ -2,12 +2,14 @@
 
 Records every LLM call with input/output tokens, model used, and agent ID.
 Provides aggregated cost views for the dashboard and budget alert thresholds.
+Persists data to Redis so nothing is lost on restart.
 """
 
 import asyncio
+import json
 import logging
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -81,10 +83,120 @@ class CostTracker:
         self._budget_alert_sent = False
         self._lock = asyncio.Lock()
         self._on_budget_alert: list = []  # callbacks
+        self._loaded = False
 
     def on_budget_alert(self, callback):
         """Register a callback for budget threshold alerts."""
         self._on_budget_alert.append(callback)
+
+    _REDIS_KEY = "cost_tracker:records"
+    _LIFETIME_COST_KEY = "cost_tracker:lifetime_cost"
+    _LIFETIME_CALLS_KEY = "cost_tracker:lifetime_calls"
+    _LIFETIME_TOKENS_KEY = "cost_tracker:lifetime_tokens"
+
+    async def _increment_lifetime(self, cost: float, tokens: int) -> None:
+        """Atomically increment lifetime counters in Redis (never reset)."""
+        try:
+            import redis.asyncio as aioredis
+            from app.config import get_settings
+            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+            pipe = r.pipeline()
+            pipe.incrbyfloat(self._LIFETIME_COST_KEY, cost)
+            pipe.incr(self._LIFETIME_CALLS_KEY)
+            pipe.incrby(self._LIFETIME_TOKENS_KEY, tokens)
+            await pipe.execute()
+            await r.aclose()
+        except Exception as e:
+            logger.debug(f"Could not update lifetime counters: {e}")
+
+    async def get_lifetime_stats(self) -> dict:
+        """Get all-time lifetime cost/calls/tokens from Redis."""
+        try:
+            import redis.asyncio as aioredis
+            from app.config import get_settings
+            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
+            pipe = r.pipeline()
+            pipe.get(self._LIFETIME_COST_KEY)
+            pipe.get(self._LIFETIME_CALLS_KEY)
+            pipe.get(self._LIFETIME_TOKENS_KEY)
+            results = await pipe.execute()
+            await r.aclose()
+            return {
+                "lifetime_cost_usd": round(float(results[0] or 0), 6),
+                "lifetime_calls": int(results[1] or 0),
+                "lifetime_tokens": int(results[2] or 0),
+            }
+        except Exception as e:
+            logger.debug(f"Could not read lifetime counters: {e}")
+            return {"lifetime_cost_usd": 0, "lifetime_calls": 0, "lifetime_tokens": 0}
+
+    async def _load_from_redis(self) -> None:
+        """Load persisted cost records from Redis on first access."""
+        if self._loaded:
+            return
+        self._loaded = True
+        try:
+            import redis.asyncio as aioredis
+            from app.config import get_settings
+            settings = get_settings()
+            r = aioredis.from_url(settings.redis_url, decode_responses=True)
+            raw = await r.get(self._REDIS_KEY)
+            await r.aclose()
+            if raw:
+                data = json.loads(raw)
+                for rec in data:
+                    record = LLMCallRecord(
+                        agent_id=rec["agent_id"],
+                        model=rec["model"],
+                        input_tokens=rec["input_tokens"],
+                        output_tokens=rec["output_tokens"],
+                        cost_usd=rec["cost_usd"],
+                        timestamp=datetime.fromisoformat(rec["timestamp"]),
+                    )
+                    self._records.append(record)
+                    # Rebuild agent totals
+                    summary = self._agent_totals[record.agent_id]
+                    summary.agent_id = record.agent_id
+                    summary.total_calls += 1
+                    summary.total_input_tokens += record.input_tokens
+                    summary.total_output_tokens += record.output_tokens
+                    summary.total_cost_usd += record.cost_usd
+                    today = datetime.now(timezone.utc).date()
+                    if self._is_today(record.timestamp, today):
+                        summary.calls_today += 1
+                        summary.cost_today_usd += record.cost_usd
+                logger.info(f"Loaded {len(data)} cost records from Redis")
+        except Exception as e:
+            logger.debug(f"Could not load cost records from Redis: {e}")
+
+    async def _save_to_redis(self) -> None:
+        """Persist recent cost records to Redis (last 7 days)."""
+        try:
+            import redis.asyncio as aioredis
+            from app.config import get_settings
+            settings = get_settings()
+            # Only keep last 7 days of records
+            cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+            from datetime import timedelta
+            cutoff = cutoff - timedelta(days=7)
+            recent = [r for r in self._records if r.timestamp >= cutoff]
+            self._records = recent
+            data = [
+                {
+                    "agent_id": r.agent_id,
+                    "model": r.model,
+                    "input_tokens": r.input_tokens,
+                    "output_tokens": r.output_tokens,
+                    "cost_usd": r.cost_usd,
+                    "timestamp": r.timestamp.isoformat(),
+                }
+                for r in recent
+            ]
+            r = aioredis.from_url(settings.redis_url, decode_responses=True)
+            await r.set(self._REDIS_KEY, json.dumps(data), ex=86400 * 8)
+            await r.aclose()
+        except Exception as e:
+            logger.debug(f"Could not save cost records to Redis: {e}")
 
     async def record(
         self,
@@ -139,6 +251,10 @@ class CostTracker:
                     except Exception as e:
                         logger.error(f"Budget alert callback error: {e}")
 
+        # Persist to Redis + update lifetime counters
+        await self._save_to_redis()
+        await self._increment_lifetime(cost, input_tokens + output_tokens)
+
     @staticmethod
     def _is_today(ts: datetime, today) -> bool:
         return ts.date() == today
@@ -187,6 +303,13 @@ class CostTracker:
             "agents": self.get_all_summaries(),
         }
 
+    async def get_overview_with_lifetime(self) -> dict:
+        """Get overview including lifetime all-time stats."""
+        overview = self.get_overview()
+        lifetime = await self.get_lifetime_stats()
+        overview.update(lifetime)
+        return overview
+
     def reset_daily(self):
         """Reset daily counters (call at midnight)."""
         self._budget_alert_sent = False
@@ -196,4 +319,13 @@ class CostTracker:
 
 
 # Global singleton
-cost_tracker = CostTracker()
+def _create_cost_tracker() -> CostTracker:
+    try:
+        from app.config import get_settings
+        s = get_settings()
+        return CostTracker(daily_budget_usd=s.daily_budget_usd, alert_threshold=s.budget_alert_threshold)
+    except Exception:
+        return CostTracker()
+
+
+cost_tracker = _create_cost_tracker()

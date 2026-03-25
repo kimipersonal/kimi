@@ -11,6 +11,7 @@ import {
   Settings,
   TrendingUp,
   Monitor,
+  Zap,
 } from 'lucide-react'
 
 const NAV_ITEMS = [
@@ -19,6 +20,7 @@ const NAV_ITEMS = [
   { href: '/agents', label: 'Agents', icon: Bot },
   { href: '/companies', label: 'Companies', icon: Building2 },
   { href: '/trading', label: 'Trading', icon: TrendingUp },
+  { href: '/skills', label: 'Skills', icon: Zap },
   { href: '/approvals', label: 'Approvals', icon: ShieldCheck },
   { href: '/logs', label: 'Logs', icon: ScrollText },
   { href: '/settings', label: 'Settings', icon: Settings },

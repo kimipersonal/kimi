@@ -9,6 +9,8 @@ import { OverviewCards } from '@/components/dashboard/OverviewCards'
 import { ActivityLog } from '@/components/dashboard/ActivityLog'
 import { ChatPanel } from '@/components/dashboard/ChatPanel'
 import { PixelOffice } from '@/components/pixel-office/PixelOffice'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { ErrorBanner } from '@/components/ui/ErrorBanner'
 
 export default function Dashboard() {
   const { events } = useWS()
@@ -18,10 +20,16 @@ export default function Dashboard() {
     pending_approvals: 0, tasks_today: 0, total_cost_today: 0,
   })
   const [chatLoading, setChatLoading] = useState(false)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   const refreshData = useCallback(async () => {
-    try { setAgents(await api.getAgents()) } catch (err) { console.error('Failed to fetch agents:', err) }
-    try { setOverview(await api.getOverview()) } catch (err) { console.error('Failed to fetch overview:', err) }
+    setError(null)
+    let failed = false
+    try { setAgents(await api.getAgents()) } catch { failed = true }
+    try { setOverview(await api.getOverview()) } catch { failed = true }
+    if (failed) setError('Failed to load some dashboard data')
+    setLoading(false)
   }, [])
 
   useEffect(() => {
@@ -57,9 +65,13 @@ export default function Dashboard() {
     }
   }
 
+  if (loading) return <LoadingSpinner message="Loading dashboard..." />
+
   return (
     <div className="space-y-6 max-w-7xl">
       <h2 className="text-xl font-bold">Overview</h2>
+
+      {error && <ErrorBanner message={error} onRetry={refreshData} />}
 
       <OverviewCards data={overview} />
 

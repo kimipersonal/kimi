@@ -1,0 +1,14 @@
+FROM python:3.12-slim
+
+# Install common data science packages
+RUN pip install --no-cache-dir \
+    pandas>=2.0 \
+    numpy>=1.26 \
+    requests>=2.31
+
+# Run as non-root
+RUN useradd -m -s /bin/sh sandbox
+USER sandbox
+WORKDIR /tmp
+
+# No CMD — container receives command at runtime

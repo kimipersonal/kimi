@@ -7,6 +7,8 @@ import { api } from '@/lib/api'
 import type { AgentDetail, WSEvent } from '@/lib/api'
 import { ChatPanel } from '@/components/dashboard/ChatPanel'
 import { ArrowLeft } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { ErrorBanner } from '@/components/ui/ErrorBanner'
 
 const STATUS_LABELS: Record<string, { label: string; color: string }> = {
   idle: { label: '🟢 Active', color: 'var(--success)' },
@@ -25,12 +27,14 @@ export default function AgentDetailPage() {
   const { events } = useWS()
   const [agent, setAgent] = useState<AgentDetail | null>(null)
   const [chatLoading, setChatLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
+    setError(null)
     try {
       setAgent(await api.getAgent(agentId))
-    } catch (err) {
-      console.error('Failed to fetch agent:', err)
+    } catch {
+      setError('Failed to load agent details')
     }
   }, [agentId])
 
@@ -61,8 +65,19 @@ export default function AgentDetailPage() {
     }
   }
 
+  if (error) {
+    return (
+      <div className="space-y-4 max-w-6xl">
+        <button onClick={() => router.back()} className="flex items-center gap-1 text-sm text-[var(--text-secondary)] hover:text-[var(--text-primary)]">
+          <ArrowLeft size={16} /> Back
+        </button>
+        <ErrorBanner message={error} onRetry={refresh} />
+      </div>
+    )
+  }
+
   if (!agent) {
-    return <div className="text-[var(--text-secondary)]">Loading agent...</div>
+    return <LoadingSpinner message="Loading agent..." />
   }
 
   const statusInfo = STATUS_LABELS[agent.status] || { label: agent.status, color: 'var(--text-secondary)' }

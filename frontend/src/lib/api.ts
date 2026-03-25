@@ -121,6 +121,60 @@ export interface CircuitStatus {
   recovery_timeout_s: number
 }
 
+export interface ModelInfo {
+  id: string
+  name: string
+  cost: string
+  type: 'native' | 'model_garden'
+  tier_hint: string
+}
+
+export interface ModelsResponse {
+  models: ModelInfo[]
+  current_tiers: { fast: string; smart: string; reasoning: string }
+}
+
+export interface SettingsUpdateRequest {
+  llm_fast?: string
+  llm_smart?: string
+  llm_reasoning?: string
+}
+
+export interface SettingsUpdateResponse {
+  updated: Record<string, string>
+  current_tiers: { fast: string; smart: string; reasoning: string }
+}
+
+export interface SkillInfo {
+  name: string
+  display_name: string
+  description: string
+  version: string
+  category: string
+  enabled: boolean
+  configured: boolean
+  tools: string[]
+  tool_count: number
+  metadata: {
+    author: string
+    tags: string[]
+    requires_config: string[]
+    icon: string
+  }
+}
+
+export interface SkillsResponse {
+  skills: SkillInfo[]
+  total: number
+}
+
+export interface SkillsStatus {
+  total: number
+  enabled: number
+  categories: string[]
+  skills: SkillInfo[]
+}
+
 export const api = {
   // Dashboard overview
   getOverview: () => fetchAPI<Overview>('/api/dashboard/overview'),
@@ -166,6 +220,14 @@ export const api = {
 
   // Settings
   getSettings: () => fetchAPI<Record<string, unknown>>('/api/dashboard/settings'),
+  updateSettings: (data: SettingsUpdateRequest) =>
+    fetchAPI<SettingsUpdateResponse>('/api/dashboard/settings', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
+  // Models
+  getModels: () => fetchAPI<ModelsResponse>('/api/dashboard/models'),
 
   // Cost tracking
   getCosts: () => fetchAPI<CostOverview>('/api/dashboard/costs'),
@@ -174,4 +236,21 @@ export const api = {
   // Health
   getHealth: () => fetchAPI<HealthStatus>('/api/dashboard/health'),
   getCircuits: () => fetchAPI<{ circuits: CircuitStatus[] }>('/api/dashboard/circuits'),
+
+  // Skills marketplace
+  getSkills: (category?: string) =>
+    fetchAPI<SkillsResponse>(`/api/skills${category ? `?category=${category}` : ''}`),
+  getSkillsStatus: () => fetchAPI<SkillsStatus>('/api/skills/status'),
+  getSkillCategories: () => fetchAPI<{ categories: Record<string, number> }>('/api/skills/categories'),
+  getSkill: (name: string) => fetchAPI<SkillInfo>(`/api/skills/${name}`),
+
+  // Trading
+  getPortfolio: () => fetchAPI<any>('/api/trading/portfolio'),
+  getTradeSignals: (limit = 20) => fetchAPI<any[]>(`/api/trading/signals?limit=${limit}`),
+  getTradeHistory: (limit = 20) => fetchAPI<any[]>(`/api/trading/history?limit=${limit}`),
+  decideSignal: (signalId: string, approved: boolean, reason?: string) =>
+    fetchAPI<Record<string, unknown>>(`/api/trading/signals/${signalId}/decide`, {
+      method: 'POST',
+      body: JSON.stringify({ approved, reason }),
+    }),
 }

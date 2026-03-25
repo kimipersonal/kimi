@@ -21,9 +21,25 @@ async def create_approval(
     details: dict | None = None,
     task_id: str | None = None,
 ) -> dict:
-    """Create a new approval request in DB and broadcast it."""
+    """Create a new approval request in DB and broadcast it.
+
+    If the estimated cost is below auto_approve_below_usd, auto-approve immediately.
+    """
+    settings = get_settings()
     approval_id = str(uuid4())
     now = datetime.now(timezone.utc)
+
+    # --- Auto-approve for low-cost actions ---
+    auto_approved = False
+    cost_value = _extract_cost(details, description)
+    if cost_value is not None and cost_value < settings.auto_approve_below_usd:
+        auto_approved = True
+        logger.info(
+            f"Auto-approving {approval_id}: cost ${cost_value:.2f} < "
+            f"threshold ${settings.auto_approve_below_usd:.2f}"
+        )
+
+    status = ApprovalStatus.APPROVED if auto_approved else ApprovalStatus.PENDING
 
     async with async_session() as session:
         approval = Approval(
@@ -33,8 +49,10 @@ async def create_approval(
             description=description,
             category=category,
             details=details,
-            status=ApprovalStatus.PENDING,
+            status=status,
             requested_at=now,
+            decided_at=now if auto_approved else None,
+            decision_reason="Auto-approved (below cost threshold)" if auto_approved else None,
         )
         session.add(approval)
         await session.commit()
@@ -45,13 +63,38 @@ async def create_approval(
         "description": description,
         "category": category,
         "details": details,
-        "status": "pending",
+        "status": status.value,
         "requested_at": now.isoformat(),
     }
 
-    await event_bus.broadcast("approval_request", result, agent_id=agent_id)
-    logger.info(f"Approval request created: {approval_id} ({category})")
+    event_name = "approval_decided" if auto_approved else "approval_request"
+    await event_bus.broadcast(event_name, result, agent_id=agent_id)
+    logger.info(f"Approval request created: {approval_id} ({category}) — {status.value}")
     return result
+
+
+def _extract_cost(details: dict | None, description: str) -> float | None:
+    """Try to extract a USD cost amount from details or description text."""
+    # Check details dict for common cost keys
+    if details:
+        for key in ("cost", "cost_usd", "amount", "amount_usd", "estimated_cost", "price"):
+            val = details.get(key)
+            if val is not None:
+                try:
+                    return float(val)
+                except (ValueError, TypeError):
+                    pass
+
+    # Try to find $XX.XX pattern in the description
+    import re
+    match = re.search(r'\$(\d+(?:\.\d+)?)', description)
+    if match:
+        try:
+            return float(match.group(1))
+        except ValueError:
+            pass
+
+    return None
 
 
 async def decide_approval(

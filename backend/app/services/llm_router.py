@@ -11,7 +11,7 @@ import os
 
 from google.auth.transport.requests import Request
 from google.oauth2 import service_account
-from litellm import acompletion
+from litellm import acompletion, aembedding
 
 from app.config import get_settings
 
@@ -31,6 +31,31 @@ FALLBACK_CHAIN = {
     "smart": ["fast"],
     "fast": [],
 }
+
+# Valid model IDs for tier assignment
+_VALID_MODEL_IDS: set[str] = set()
+
+
+def _rebuild_valid_ids() -> None:
+    """Rebuild the set of valid model IDs from AVAILABLE_MODELS."""
+    _VALID_MODEL_IDS.clear()
+    for m in AVAILABLE_MODELS:
+        _VALID_MODEL_IDS.add(m["id"])
+
+
+def update_tier(tier: str, model_id: str) -> None:
+    """Change which model a tier uses at runtime (no restart needed).
+
+    Raises ValueError if tier name or model_id is invalid.
+    """
+    if tier not in MODEL_TIERS:
+        raise ValueError(f"Unknown tier '{tier}'. Must be one of: {list(MODEL_TIERS)}")
+    if not _VALID_MODEL_IDS:
+        _rebuild_valid_ids()
+    if model_id not in _VALID_MODEL_IDS:
+        raise ValueError(f"Unknown model '{model_id}'. Check /api/dashboard/models for valid IDs.")
+    MODEL_TIERS[tier] = model_id
+    logger.info(f"Tier '{tier}' updated to model '{model_id}'")
 
 # Third-party Model Garden models need OpenAI-compatible routing.
 # Map model prefix → region (some models are region-specific).
@@ -72,6 +97,10 @@ AVAILABLE_MODELS: list[dict] = [
     {"id": "meta/llama-3.3-70b-instruct-maas", "name": "Llama 3.3 70B", "cost": "~$0.001", "type": "model_garden", "tier_hint": "smart"},
     {"id": "meta/llama-4-maverick-17b-128e-instruct-maas", "name": "Llama 4 Maverick", "cost": "~$0.001", "type": "model_garden", "tier_hint": "smart"},
     {"id": "meta/llama-4-scout-17b-16e-instruct-maas", "name": "Llama 4 Scout", "cost": "~$0.001", "type": "model_garden", "tier_hint": "fast"},
+    # GitHub Models (requires github_token in .env)
+    {"id": "github/gpt-4o", "name": "GPT-4o (GitHub)", "cost": "~$0.005", "type": "github", "tier_hint": "reasoning"},
+    {"id": "github/gpt-4o-mini", "name": "GPT-4o Mini (GitHub)", "cost": "~$0.001", "type": "github", "tier_hint": "fast"},
+    {"id": "github/o3-mini", "name": "o3-mini (GitHub)", "cost": "~$0.005", "type": "github", "tier_hint": "reasoning"},
 ]
 
 # Cached GCP credentials for Model Garden auth
@@ -94,12 +123,31 @@ def _get_access_token() -> str:
 
 def _is_model_garden(model: str) -> bool:
     """Check if a model is a third-party Model Garden model (not native Gemini)."""
-    return "/" in model and not model.startswith("vertex_ai/")
+    return "/" in model and not model.startswith("vertex_ai/") and not model.startswith("github/")
+
+
+def _is_github_model(model: str) -> bool:
+    """Check if a model uses the GitHub Models API."""
+    return model.startswith("github/")
 
 
 def _build_kwargs(model: str, messages, temperature, max_tokens, tools) -> dict:
-    """Build LiteLLM kwargs for either Gemini or Model Garden models."""
-    if _is_model_garden(model):
+    """Build LiteLLM kwargs for Gemini, Model Garden, or GitHub Models."""
+    if _is_github_model(model):
+        # GitHub Models API — OpenAI-compatible
+        actual_model = model[len("github/"):]  # strip "github/" prefix
+        github_token = settings.github_token
+        if not github_token:
+            raise RuntimeError("github_token not configured in .env")
+        kwargs = {
+            "model": f"openai/{actual_model}",
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+            "api_base": "https://models.inference.ai.azure.com",
+            "api_key": github_token,
+        }
+    elif _is_model_garden(model):
         region = _MODEL_GARDEN_REGIONS.get(model, "global")
         if region == "global":
             endpoint_base = "aiplatform.googleapis.com"
@@ -229,3 +277,60 @@ def _parse_response(response, model_name: str) -> dict:
         },
         "finish_reason": choice.finish_reason,
     }
+
+
+# --- Embedding support ---
+
+EMBEDDING_MODEL = "vertex_ai/text-embedding-005"
+EMBEDDING_DIM = 768
+
+
+async def get_embedding(text: str) -> list[float]:
+    """Get a text embedding vector using Vertex AI text-embedding-005.
+
+    Returns a list of 768 floats.
+    """
+    try:
+        response = await aembedding(
+            model=EMBEDDING_MODEL,
+            input=[text],
+            vertex_project=settings.gcp_project_id,
+            vertex_location=settings.gcp_region if settings.gcp_region != "global" else "us-central1",
+        )
+        return response.data[0]["embedding"]
+    except Exception as e:
+        logger.error(f"Embedding request failed: {e}")
+        raise
+
+
+# --- Context window sizes (tokens) ---
+
+MODEL_CONTEXT_WINDOWS: dict[str, int] = {
+    # Native Gemini
+    "gemini-2.5-flash": 1_048_576,
+    "gemini-2.5-pro": 1_048_576,
+    "gemini-2.5-flash-lite": 1_048_576,
+    # Model Garden
+    "deepseek-ai/deepseek-v3.2-maas": 131_072,
+    "deepseek-ai/deepseek-v3.1-maas": 131_072,
+    "deepseek-ai/deepseek-r1-0528-maas": 131_072,
+    "deepseek-ai/deepseek-ocr-maas": 32_768,
+    "moonshotai/kimi-k2-thinking-maas": 131_072,
+    "zai-org/glm-5-maas": 131_072,
+    "zai-org/glm-4.7-maas": 131_072,
+    "minimaxai/minimax-m2-maas": 131_072,
+    "qwen/qwen3-next-80b-a3b-instruct-maas": 131_072,
+    "openai/gpt-oss-120b-maas": 131_072,
+    "openai/gpt-oss-20b-maas": 131_072,
+    "meta/llama-3.3-70b-instruct-maas": 131_072,
+    "meta/llama-4-maverick-17b-128e-instruct-maas": 131_072,
+    "meta/llama-4-scout-17b-16e-instruct-maas": 131_072,
+}
+
+DEFAULT_CONTEXT_WINDOW = 131_072
+
+
+def get_context_window(model: str | None = None, tier: str = "smart") -> int:
+    """Get the context window size for a model or tier."""
+    model_name = model or MODEL_TIERS.get(tier, MODEL_TIERS["smart"])
+    return MODEL_CONTEXT_WINDOWS.get(model_name, DEFAULT_CONTEXT_WINDOW)

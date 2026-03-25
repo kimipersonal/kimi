@@ -10,11 +10,14 @@ from sqlalchemy import (
     Enum,
     Float,
     ForeignKey,
+    Index,
     Integer,
     String,
     Text,
 )
 from sqlalchemy.orm import Mapped, mapped_column, relationship
+
+from pgvector.sqlalchemy import Vector
 
 from app.db.database import Base
 
@@ -111,6 +114,7 @@ class Agent(Base):
     )
     system_prompt: Mapped[str] = mapped_column(Text, nullable=False)
     tools: Mapped[list] = mapped_column(JSON, default=list)  # list of tool names
+    config: Mapped[dict] = mapped_column(JSON, default=dict)  # capabilities: sandbox, browser, skills, network
     company_id: Mapped[str | None] = mapped_column(
         String(36), ForeignKey("companies.id"), nullable=True
     )
@@ -304,4 +308,29 @@ class Trade(Base):
     opened_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     closed_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
+    )
+
+
+class AgentMemory(Base):
+    """Vector memory store for agents — enables semantic recall across sessions."""
+
+    __tablename__ = "agent_memories"
+
+    id: Mapped[str] = mapped_column(String(36), primary_key=True, default=new_id)
+    agent_id: Mapped[str] = mapped_column(
+        String(36), ForeignKey("agents.id"), nullable=False, index=True
+    )
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    embedding = mapped_column(Vector(768), nullable=False)
+    importance: Mapped[float] = mapped_column(Float, default=0.5)
+    category: Mapped[str] = mapped_column(
+        String(50), default="general"
+    )  # general, task, conversation, insight, error
+    metadata_: Mapped[dict | None] = mapped_column("metadata", JSON, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=utcnow
+    )
+
+    __table_args__ = (
+        Index("ix_agent_memories_agent_category", "agent_id", "category"),
     )

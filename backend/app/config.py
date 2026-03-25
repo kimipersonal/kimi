@@ -25,6 +25,11 @@ class Settings(BaseSettings):
     gcp_region: str = "global"
     google_application_credentials: str = ""
 
+    # Alternate LLM Providers (for multi-provider failover)
+    anthropic_api_key: str = ""
+    openai_api_key: str = ""
+    groq_api_key: str = ""
+
     # LLM Model tiers (Vertex AI model identifiers)
     llm_fast: str = "google/gemini-3.1-flash-lite-preview"
     llm_smart: str = "deepseek-ai/deepseek-v3.2-maas"
@@ -53,9 +58,29 @@ class Settings(BaseSettings):
     capital_email: str = ""
     capital_password: str = ""
 
+    # Owner
+    owner_name: str = ""  # Owner's display name (used in CEO prompt)
+    owner_language: str = ""  # e.g. "Uzbek", "English" — empty = match user's language
+
+    # GitHub Models API (optional — for using GitHub-hosted models)
+    github_token: str = ""  # GitHub personal access token with copilot scope
+
     # Agent settings
     approval_timeout_hours: int = 24
     auto_approve_below_usd: float = 10.0
+    conversation_history_size: int = 20  # messages kept in CEO's rolling context
+
+    # Telegram settings
+    ceo_run_timeout: int = 120  # seconds — max time for a single CEO run
+    max_telegram_msg_len: int = 4000  # Telegram limit ~4096, leave headroom
+    daily_report_hour: int = 9  # UTC hour for daily CEO report
+
+    # Cost tracking
+    daily_budget_usd: float = 5.0
+    budget_alert_threshold: float = 0.8  # alert at 80% of budget
+
+    # Plugins
+    enabled_plugins: str = ""  # comma-separated list, empty = load all
 
     model_config = {"env_file": str(_ENV_FILE), "env_file_encoding": "utf-8"}
 

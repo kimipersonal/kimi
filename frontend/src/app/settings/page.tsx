@@ -2,70 +2,112 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { api } from '@/lib/api'
-import type { CostOverview, HealthStatus, CircuitStatus } from '@/lib/api'
-import { Settings as SettingsIcon } from 'lucide-react'
+import type { CostOverview, HealthStatus, CircuitStatus, ModelsResponse } from '@/lib/api'
+import { Settings as SettingsIcon, Check, Loader2 } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { ErrorBanner } from '@/components/ui/ErrorBanner'
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Record<string, unknown> | null>(null)
   const [costs, setCosts] = useState<CostOverview | null>(null)
   const [health, setHealth] = useState<HealthStatus | null>(null)
   const [circuits, setCircuits] = useState<CircuitStatus[]>([])
+  const [modelsData, setModelsData] = useState<ModelsResponse | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+
+  // Model tier editing state
+  const [tierFast, setTierFast] = useState('')
+  const [tierSmart, setTierSmart] = useState('')
+  const [tierReasoning, setTierReasoning] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveMsg, setSaveMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   const refresh = useCallback(async () => {
+    setError(null)
+    let failed = false
     try {
-      const [s, c, h, cb] = await Promise.all([
+      const [s, c, h, cb, m] = await Promise.all([
         api.getSettings(),
         api.getCosts(),
         api.getHealth(),
         api.getCircuits(),
+        api.getModels(),
       ])
       setSettings(s)
       setCosts(c)
       setHealth(h)
       setCircuits(cb.circuits)
-    } catch (err) {
-      console.error('Failed to fetch settings:', err)
+      setModelsData(m)
+      setTierFast(m.current_tiers.fast)
+      setTierSmart(m.current_tiers.smart)
+      setTierReasoning(m.current_tiers.reasoning)
+    } catch {
+      failed = true
     }
+    if (failed) setError('Failed to load settings data')
+    setLoading(false)
   }, [])
 
   useEffect(() => { refresh() }, [refresh])
 
-  if (!settings) {
-    return <div className="text-[var(--text-secondary)]">Loading settings...</div>
+  const handleSaveTiers = async () => {
+    if (!modelsData) return
+    const changes: Record<string, string> = {}
+    if (tierFast !== modelsData.current_tiers.fast) changes.llm_fast = tierFast
+    if (tierSmart !== modelsData.current_tiers.smart) changes.llm_smart = tierSmart
+    if (tierReasoning !== modelsData.current_tiers.reasoning) changes.llm_reasoning = tierReasoning
+    if (Object.keys(changes).length === 0) {
+      setSaveMsg({ type: 'success', text: 'No changes to save' })
+      setTimeout(() => setSaveMsg(null), 2000)
+      return
+    }
+    setSaving(true)
+    setSaveMsg(null)
+    try {
+      const result = await api.updateSettings(changes)
+      setModelsData(prev => prev ? { ...prev, current_tiers: result.current_tiers } : prev)
+      setSaveMsg({ type: 'success', text: `Updated ${Object.keys(result.updated).join(', ')} tier(s)` })
+    } catch (err) {
+      setSaveMsg({ type: 'error', text: err instanceof Error ? err.message : 'Failed to save' })
+    } finally {
+      setSaving(false)
+      setTimeout(() => setSaveMsg(null), 4000)
+    }
   }
 
-  const sections = [
-    {
-      title: 'LLM Models',
-      items: [
-        { label: 'Fast (Cheap, Bulk)', value: settings.llm_model_fast },
-        { label: 'Smart (Balanced)', value: settings.llm_model_smart },
-        { label: 'Reasoning (Complex)', value: settings.llm_model_reasoning },
-      ],
-    },
+  const hasChanges = modelsData && (
+    tierFast !== modelsData.current_tiers.fast ||
+    tierSmart !== modelsData.current_tiers.smart ||
+    tierReasoning !== modelsData.current_tiers.reasoning
+  )
+
+  if (loading) return <LoadingSpinner message="Loading settings..." />
+
+  const budgetPct = costs?.budget_used_pct ?? 0
+  const budgetColor = budgetPct > 80 ? 'var(--danger)' : budgetPct > 50 ? 'var(--warning)' : 'var(--success)'
+
+  const configSections = [
     {
       title: 'Vertex AI',
       items: [
-        { label: 'Project', value: settings.vertex_project },
-        { label: 'Default Location', value: settings.vertex_location },
+        { label: 'Project', value: settings?.vertex_project },
+        { label: 'Default Location', value: settings?.vertex_location },
       ],
     },
     {
       title: 'Integrations',
       items: [
-        { label: 'Telegram Bot', value: settings.telegram_bot_token ? '✅ Configured' : '❌ Not configured' },
+        { label: 'Telegram Bot', value: settings?.telegram_bot_token ? '✅ Configured' : '❌ Not configured' },
       ],
     },
     {
       title: 'Limits',
       items: [
-        { label: 'Auto-Approval Threshold', value: `$${settings.auto_approval_threshold}` },
+        { label: 'Auto-Approval Threshold', value: `$${settings?.auto_approval_threshold}` },
       ],
     },
   ]
-
-  const budgetPct = costs?.budget_used_pct ?? 0
-  const budgetColor = budgetPct > 80 ? 'var(--danger)' : budgetPct > 50 ? 'var(--warning)' : 'var(--success)'
 
   return (
     <div className="space-y-6 max-w-3xl">
@@ -73,6 +115,8 @@ export default function SettingsPage() {
         <SettingsIcon size={20} className="text-[var(--text-secondary)]" />
         <h2 className="text-xl font-bold">Settings & Monitoring</h2>
       </div>
+
+      {error && <ErrorBanner message={error} onRetry={refresh} />}
 
       {/* Health Status */}
       {health && (
@@ -173,12 +217,54 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* Config sections */}
-      <p className="text-sm text-[var(--text-secondary)]">
-        System configuration via <code className="text-xs px-1.5 py-0.5 rounded bg-[var(--bg-card)]">.env</code> file.
-      </p>
+      {/* LLM Model Tiers — Interactive */}
+      {modelsData && (
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
+          <h3 className="text-sm font-semibold px-4 py-3 border-b border-[var(--border)] flex items-center justify-between">
+            🤖 LLM Model Tiers
+            {hasChanges && (
+              <button
+                onClick={handleSaveTiers}
+                disabled={saving}
+                className="flex items-center gap-1 text-xs px-3 py-1.5 rounded bg-[var(--accent)] text-white hover:opacity-80 disabled:opacity-50"
+              >
+                {saving ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                {saving ? 'Saving...' : 'Save Changes'}
+              </button>
+            )}
+          </h3>
+          <div className="p-4 space-y-4">
+            {saveMsg && (
+              <div className={`text-xs px-3 py-2 rounded ${saveMsg.type === 'success' ? 'bg-[var(--success)]/20 text-[var(--success)]' : 'bg-[var(--danger)]/20 text-[var(--danger)]'}`}>
+                {saveMsg.text}
+              </div>
+            )}
+            {[
+              { label: '⚡ Fast (Cheap, Bulk)', value: tierFast, setter: setTierFast },
+              { label: '🧠 Smart (Balanced)', value: tierSmart, setter: setTierSmart },
+              { label: '💎 Reasoning (Complex)', value: tierReasoning, setter: setTierReasoning },
+            ].map(tier => (
+              <div key={tier.label}>
+                <label className="text-xs text-[var(--text-secondary)] mb-1 block">{tier.label}</label>
+                <select
+                  value={tier.value}
+                  onChange={e => tier.setter(e.target.value)}
+                  className="w-full text-sm px-3 py-2 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text-primary)]"
+                >
+                  {modelsData.models.map(m => (
+                    <option key={m.id} value={m.id}>
+                      {m.name} — {m.cost} ({m.type === 'native' ? 'Gemini' : 'Model Garden'})
+                    </option>
+                  ))}
+                </select>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
-      {sections.map(section => (
+      {/* Config sections */}
+      {configSections.map(section => (
         <div key={section.title} className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
           <h3 className="text-sm font-semibold px-4 py-3 border-b border-[var(--border)]">{section.title}</h3>
           <div className="divide-y divide-[var(--border)]">

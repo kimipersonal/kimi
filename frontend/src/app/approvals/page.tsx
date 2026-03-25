@@ -5,6 +5,8 @@ import { useWS } from '@/hooks/WSContext'
 import { api } from '@/lib/api'
 import type { Approval } from '@/lib/api'
 import { ShieldCheck } from 'lucide-react'
+import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
+import { ErrorBanner } from '@/components/ui/ErrorBanner'
 
 const CATEGORY_ICONS: Record<string, string> = {
   company_creation: '🏢',
@@ -19,13 +21,19 @@ export default function ApprovalsPage() {
   const [approvals, setApprovals] = useState<Approval[]>([])
   const [filter, setFilter] = useState<string>('all')
   const [rejectReasons, setRejectReasons] = useState<Record<string, string>>({})
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
 
   const refresh = useCallback(async () => {
+    setError(null)
+    setLoading(true)
     try {
       const status = filter === 'all' ? undefined : filter
       setApprovals(await api.getApprovals(status))
-    } catch (err) {
-      console.error('Failed to fetch approvals:', err)
+    } catch {
+      setError('Failed to load approvals')
+    } finally {
+      setLoading(false)
     }
   }, [filter])
 
@@ -74,8 +82,11 @@ export default function ApprovalsPage() {
         </div>
       </div>
 
+      {loading && <LoadingSpinner message="Loading approvals..." />}
+      {error && <ErrorBanner message={error} onRetry={refresh} />}
+
       {/* Pending approvals */}
-      {pending.length > 0 && (
+      {!loading && pending.length > 0 && (
         <section>
           <h3 className="text-sm font-semibold text-[var(--warning)] mb-3">⏳ Pending ({pending.length})</h3>
           <div className="space-y-3">
@@ -128,7 +139,7 @@ export default function ApprovalsPage() {
       )}
 
       {/* Decided approvals */}
-      {decided.length > 0 && (
+      {!loading && decided.length > 0 && (
         <section>
           <h3 className="text-sm font-semibold text-[var(--text-secondary)] mb-3">History ({decided.length})</h3>
           <div className="space-y-2">
@@ -159,11 +170,11 @@ export default function ApprovalsPage() {
         </section>
       )}
 
-      {approvals.length === 0 && (
+      {!loading && !error && approvals.length === 0 && (
         <div className="text-center py-16 text-[var(--text-secondary)]">
           <ShieldCheck size={40} className="mx-auto mb-3 opacity-40" />
           <p className="text-lg mb-2">No approvals</p>
-          <p className="text-sm">When agents request approval, they'll appear here.</p>
+          <p className="text-sm">When agents request approval, they&apos;ll appear here.</p>
         </div>
       )}
     </div>

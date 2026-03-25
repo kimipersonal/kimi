@@ -21,7 +21,7 @@ from app.services.event_bus import event_bus
 logger = logging.getLogger(__name__)
 
 
-def _build_ceo_system_prompt() -> str:
+def _build_ceo_system_prompt(state_summary: str = "") -> str:
     """Build the CEO system prompt, injecting owner name and language if configured."""
     settings = get_settings()
     owner_label = f'"{settings.owner_name}"' if settings.owner_name else "the Owner"
@@ -45,6 +45,16 @@ def _build_ceo_system_prompt() -> str:
             "If in Russian, respond in Russian. If in English, respond in English. "
             "Match the Owner's language automatically."
         )
+
+    if not state_summary:
+        current_state = (
+            "CURRENT STATE:\n"
+            "- You are just starting. No companies or agents exist yet.\n"
+            "- The Owner will give you initial directions.\n"
+            "- Start by understanding what the Owner wants and propose a plan."
+        )
+    else:
+        current_state = f"CURRENT STATE:\n{state_summary}"
 
     return f"""You are the CEO (Chief Executive Officer) of "AI Holding" — an AI-powered holding company.
 
@@ -100,22 +110,22 @@ COMMUNICATION STYLE:
 - When making decisions, explain your reasoning briefly
 - Always mention when something requires Owner approval{language_line}
 
-CURRENT STATE:
-- You are just starting. No companies or agents exist yet.
-- The Owner will give you initial directions.
-- Start by understanding what the Owner wants and propose a plan.
+IMPORTANT: You may have existing companies and agents already running. ALWAYS use check_status tool FIRST
+before making any claims about what companies or agents exist. Never assume the holding is empty.
+
+{current_state}
 """
 
 
 class CEOAgent(BaseAgent):
     """CEO Agent with company and agent management tools."""
 
-    def __init__(self, agent_id: str | None = None):
+    def __init__(self, agent_id: str | None = None, state_summary: str = ""):
         super().__init__(
             agent_id=agent_id or str(uuid4()),
             name="CEO",
             role="Chief Executive Officer",
-            system_prompt=_build_ceo_system_prompt(),
+            system_prompt=_build_ceo_system_prompt(state_summary),
             model_tier="reasoning",
             tools=[
                 "create_company",

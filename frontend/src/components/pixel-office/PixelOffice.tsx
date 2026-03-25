@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useCallback, useMemo } from 'react'
+import { useEffect, useState, useCallback, useMemo, useRef } from 'react'
 import { useWS } from '@/hooks/WSContext'
 import { api } from '@/lib/api'
 import type { Agent, Company } from '@/lib/api'
@@ -24,13 +24,12 @@ interface SpeechBubble {
   id: number
 }
 
-let bubbleId = 0
-
 export function PixelOffice() {
   const { events } = useWS()
   const [agents, setAgents] = useState<Agent[]>([])
   const [companies, setCompanies] = useState<Company[]>([])
   const [speeches, setSpeeches] = useState<SpeechBubble[]>([])
+  const bubbleIdRef = useRef(0)
 
   const fetchData = useCallback(async () => {
     try { setAgents(await api.getAgents()) } catch { /* retry on next event */ }
@@ -62,7 +61,7 @@ export function PixelOffice() {
     // Show speech bubble on agent actions
     if (last.event === 'log' && last.agent_id && last.data?.action) {
       const text = String(last.data.action).slice(0, 30)
-      const id = ++bubbleId
+      const id = ++bubbleIdRef.current
       setSpeeches(prev => [...prev.slice(-5), { agentId: last.agent_id!, text, id }])
       // Remove after animation
       setTimeout(() => {

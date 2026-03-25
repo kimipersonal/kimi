@@ -86,3 +86,12 @@ services:
 volumes:
   postgres_data:
   redis_data:
+
+  # --- Code Sandbox ---
+  sandbox:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile.sandbox
+    image: ai-holding-sandbox:latest
+    profiles:
+      - build-only
