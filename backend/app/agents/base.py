@@ -376,7 +376,10 @@ class BaseAgent:
             tool_name = tc["name"]
             tool_args = tc["arguments"]
 
-            await self.log_activity("tool_call", {"tool": tool_name, "args": tool_args})
+            try:
+                await self.log_activity("tool_call", {"tool": tool_name, "args": tool_args})
+            except Exception:
+                pass
 
             import time as _time
             _t0 = _time.perf_counter()
@@ -863,6 +866,19 @@ class BaseAgent:
             if has_error:
                 output = f"Error: {result['error']}"
                 await self._set_status(AgentStatus.ERROR)
+
+            # If output is empty but tools were executed, build a summary
+            # from the last tool results so the user isn't left with silence
+            if not output.strip() and not has_error:
+                tool_msgs = [
+                    m for m in self._last_run_messages
+                    if m.get("role") == "tool"
+                ]
+                if tool_msgs:
+                    summaries = [m.get("content", "")[:300] for m in tool_msgs[-3:]]
+                    output = "Actions completed:\n" + "\n".join(
+                        f"- {s}" for s in summaries if s
+                    )
 
             await self.log_activity("completed", {"output": output[:500]})
 

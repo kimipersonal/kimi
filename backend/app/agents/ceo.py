@@ -221,14 +221,39 @@ class CEOAgent(BaseAgent):
             from app.config import get_settings
             settings = get_settings()
             max_entries = settings.conversation_history_size * 2  # user + assistant pairs
-            # Keep only the most recent entries
-            trimmed = self._conversations[-max_entries:] if len(self._conversations) > max_entries else self._conversations
+            # Trim at safe boundaries — never orphan tool messages
+            trimmed = self._trim_history(self._conversations, max_entries)
             self._conversations = trimmed
             r = aioredis.from_url(settings.redis_url, decode_responses=True)
             await r.set(self._REDIS_KEY, json.dumps(trimmed), ex=86400 * 7)  # 7 day TTL
             await r.aclose()
         except Exception as e:
             logger.debug(f"Could not save conversation history: {e}")
+
+    @staticmethod
+    def _trim_history(conversations: list[dict], max_entries: int) -> list[dict]:
+        """Trim conversation history at safe boundaries.
+
+        Never cuts inside a tool interaction group (assistant-with-tool_calls → tool results).
+        Finds the earliest safe cut point at or after len-max_entries.
+        """
+        if len(conversations) <= max_entries:
+            return conversations
+
+        # Start from the naive cut point and walk forward to a safe boundary
+        cut = len(conversations) - max_entries
+        while cut < len(conversations):
+            msg = conversations[cut]
+            role = msg.get("role", "")
+            # Safe boundaries: a "user" message or an "assistant" without tool_calls
+            if role == "user" or (role == "assistant" and not msg.get("tool_calls")):
+                break
+            cut += 1  # skip orphaned tool or assistant-with-tool_calls
+
+        if cut >= len(conversations):
+            # Fallback: keep everything
+            return conversations
+        return conversations[cut:]
 
     def _get_history_messages(self) -> list[dict]:
         """Return conversation history as role/content dicts for the LLM.

@@ -185,6 +185,7 @@ def _build_kwargs(model: str, messages, temperature, max_tokens, tools) -> dict:
 
     if tools:
         kwargs["tools"] = tools
+        kwargs["tool_choice"] = "auto"
     return kwargs
 
 

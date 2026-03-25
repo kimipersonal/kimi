@@ -77,10 +77,20 @@ async def compact_messages(
     system_msg = messages[0] if messages and messages[0].get("role") == "system" else None
     non_system = messages[1:] if system_msg else messages
 
-    # Keep at least MIN_RECENT_MESSAGES from the end
+    # Keep at least MIN_RECENT_MESSAGES from the end, but never split inside
+    # a tool interaction group (assistant-with-tool_calls → tool results)
     keep_count = min(MIN_RECENT_MESSAGES, len(non_system))
-    recent = non_system[-keep_count:] if keep_count > 0 else []
-    middle = non_system[:-keep_count] if keep_count > 0 else non_system
+    cut_idx = len(non_system) - keep_count
+    # Walk the cut point backward until we reach a safe boundary
+    while cut_idx > 0:
+        msg = non_system[cut_idx]
+        role = msg.get("role", "")
+        if role == "user" or (role == "assistant" and not msg.get("tool_calls")):
+            break
+        cut_idx -= 1  # include orphaned tool/assistant-with-tool_calls in recent
+
+    recent = non_system[cut_idx:] if cut_idx < len(non_system) else []
+    middle = non_system[:cut_idx] if cut_idx > 0 else []
 
     if not middle:
         # Nothing to summarize, just truncate

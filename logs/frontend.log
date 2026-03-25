@@ -4,3 +4,14 @@
  ✓ Starting...
  ⚠ "next start" does not work with "output: standalone" configuration. Use "node .next/standalone/server.js" instead.
  ✓ Ready in 612ms
+Error: Failed to find Server Action "x". This request might be from an older or newer deployment. Original error: Cannot read properties of undefined (reading 'workers')
+    at rT (/home/kimi/projects/kimi/frontend/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:16:1766)
+    at /home/kimi/projects/kimi/frontend/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:16:303
+    at process.processTicksAndRejections (node:internal/process/task_queues:103:5)
+    at async rE (/home/kimi/projects/kimi/frontend/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:15:8148)
+    at async r7 (/home/kimi/projects/kimi/frontend/node_modules/next/dist/compiled/next-server/app-page.runtime.prod.js:18:1144)
+    at async doRender (/home/kimi/projects/kimi/frontend/node_modules/next/dist/server/base-server.js:1413:30)
+    at async cacheEntry.responseCache.get.routeKind (/home/kimi/projects/kimi/frontend/node_modules/next/dist/server/base-server.js:1574:28)
+    at async NextNodeServer.renderToResponseWithComponentsImpl (/home/kimi/projects/kimi/frontend/node_modules/next/dist/server/base-server.js:1482:28)
+    at async NextNodeServer.renderPageComponent (/home/kimi/projects/kimi/frontend/node_modules/next/dist/server/base-server.js:1908:24)
+    at async NextNodeServer.renderToResponseImpl (/home/kimi/projects/kimi/frontend/node_modules/next/dist/server/base-server.js:1946:32)
