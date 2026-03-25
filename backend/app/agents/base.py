@@ -285,6 +285,8 @@ class BaseAgent:
             logger.debug(f"Context compaction skipped: {e}")
 
         try:
+            import json
+
             tools_schema = self._get_tools_schema() if (self.tools or self.sandbox_enabled or self.browser_enabled or self.skills is not None) else None
             if tools_schema is not None and len(tools_schema) == 0:
                 tools_schema = None
@@ -303,20 +305,30 @@ class BaseAgent:
             new_messages = list(state.get("messages", []))
             if state.get("current_input"):
                 new_messages.append({"role": "user", "content": state["current_input"]})
-            new_messages.append(
-                {"role": "assistant", "content": response["content"] or ""}
-            )
 
             tool_calls = response.get("tool_calls") or []
+            parsed_calls = [self._parse_tool_call(tc) for tc in tool_calls] if tool_calls else []
+
+            # Build assistant message — attach tool_calls so the LLM
+            # sees a proper function-calling conversation on the next turn
+            assistant_msg: dict = {"role": "assistant", "content": response["content"] or ""}
+            if parsed_calls:
+                assistant_msg["tool_calls"] = [
+                    {
+                        "id": pc["id"],
+                        "type": "function",
+                        "function": {"name": pc["name"], "arguments": json.dumps(pc["arguments"])},
+                    }
+                    for pc in parsed_calls
+                ]
+            new_messages.append(assistant_msg)
 
             return {
                 **state,
                 "messages": new_messages,
                 "output": response["content"] or "",
-                "tool_calls": [self._parse_tool_call(tc) for tc in tool_calls]
-                if tool_calls
-                else [],
-                "should_continue": bool(tool_calls),
+                "tool_calls": parsed_calls,
+                "should_continue": bool(parsed_calls),
                 "current_input": "",
                 "error": None,
             }
@@ -388,21 +400,25 @@ class BaseAgent:
                 except Exception:
                     pass
 
-        # Add tool results as messages for next think cycle
+        # Add tool results as proper tool-role messages for next think cycle
         new_messages = list(state.get("messages", []))
-        for tr in tool_results:
+        for i, tr in enumerate(tool_results):
+            # Get the corresponding tool call ID
+            tc_id = calls_to_run[i]["id"] if i < len(calls_to_run) else f"call_{i}"
             if "error" in tr:
                 new_messages.append(
                     {
-                        "role": "user",
-                        "content": f"Tool '{tr['tool']}' error: {tr['error']}",
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": f"Error: {tr['error']}",
                     }
                 )
             else:
                 new_messages.append(
                     {
-                        "role": "user",
-                        "content": f"Tool '{tr['tool']}' result: {tr['result']}",
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "content": str(tr["result"]),
                     }
                 )
 
@@ -792,8 +808,12 @@ class BaseAgent:
                     args = json.loads(args)
                 except json.JSONDecodeError:
                     args = {"raw": args}
-            return {"name": tc.function.name, "arguments": args}
-        return {"name": str(tc), "arguments": {}}
+            return {
+                "id": getattr(tc, "id", None) or f"call_{id(tc)}",
+                "name": tc.function.name,
+                "arguments": args,
+            }
+        return {"id": f"call_{id(tc)}", "name": str(tc), "arguments": {}}
 
     # --- Main execution ---
 
@@ -833,6 +853,8 @@ class BaseAgent:
                 initial_state,
                 config={"recursion_limit": self.MAX_TOOL_ROUNDS * 2 + 5},
             )
+            # Store final messages for subclasses that need tool interaction history
+            self._last_run_messages = result.get("messages", [])
             await self._set_status(AgentStatus.IDLE)
 
             output = result.get("output", "")

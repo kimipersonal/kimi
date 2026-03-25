@@ -136,6 +136,15 @@ AUTONOMOUS OPERATION:
 IMPORTANT: You may have existing companies and agents already running. ALWAYS use check_status tool FIRST
 before making any claims about what companies or agents exist. Never assume the holding is empty.
 
+CRITICAL — TOOL USAGE:
+- You MUST use tool function calls to perform actions. NEVER just describe what you plan to do — CALL the tool.
+- When you say "I will dissolve the company", you MUST immediately invoke dissolve_company in the same response.
+- When you say "I will assign tasks", you MUST immediately invoke assign_task for each agent.
+- If you describe an action plan, execute ALL steps using tool calls in this response. Do NOT just list intentions.
+- WRONG: "I will now dissolve Alpha Trading." (text only, no tool call)
+- RIGHT: Call dissolve_company(company_id="...") immediately.
+- After executing tools, summarize what was ACTUALLY done based on tool results.
+
 {current_state}
 """
 
@@ -222,8 +231,20 @@ class CEOAgent(BaseAgent):
             logger.debug(f"Could not save conversation history: {e}")
 
     def _get_history_messages(self) -> list[dict]:
-        """Return conversation history as role/content dicts for the LLM."""
-        return [{"role": c["role"], "content": c["content"]} for c in self._conversations]
+        """Return conversation history as role/content dicts for the LLM.
+
+        Preserves tool_calls on assistant messages and tool_call_id on tool
+        messages so the LLM sees proper function-calling conversation flow.
+        """
+        msgs = []
+        for c in self._conversations:
+            msg: dict = {"role": c["role"], "content": c["content"]}
+            if c.get("tool_calls"):
+                msg["tool_calls"] = c["tool_calls"]
+            if c.get("tool_call_id"):
+                msg["tool_call_id"] = c["tool_call_id"]
+            msgs.append(msg)
+        return msgs
 
     def _get_tools_schema(self) -> list[dict]:
         """OpenAI-format tool definitions for the CEO."""
@@ -1382,6 +1403,35 @@ class CEOAgent(BaseAgent):
             # Pass conversation history so the LLM sees prior turns
             output = await super().run(user_input, history=self._get_history_messages()[:-1])
 
+            # Extract tool interactions from the graph execution to preserve
+            # in conversation history — this makes the LLM see a pattern of
+            # actually calling tools rather than just describing intentions.
+            run_messages = getattr(self, "_last_run_messages", [])
+            # Skip the history messages we passed in + the user message that was
+            # appended; keep only new assistant/tool messages from this run.
+            history_len = len(self._get_history_messages()) - 1  # -1 for user msg just added
+            new_interaction_msgs = run_messages[history_len:] if len(run_messages) > history_len else []
+
+            for msg in new_interaction_msgs:
+                role = msg.get("role", "")
+                if role == "assistant" and msg.get("tool_calls"):
+                    # Preserve assistant message with tool_calls attached
+                    self._conversations.append({
+                        "role": "assistant",
+                        "content": msg.get("content") or "",
+                        "tool_calls": msg["tool_calls"],
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+                elif role == "tool":
+                    # Preserve tool result message
+                    self._conversations.append({
+                        "role": "tool",
+                        "content": msg.get("content", ""),
+                        "tool_call_id": msg.get("tool_call_id", ""),
+                        "timestamp": datetime.now(timezone.utc).isoformat(),
+                    })
+
+            # Always store the final assistant text output
             self._conversations.append(
                 {
                     "role": "assistant",
