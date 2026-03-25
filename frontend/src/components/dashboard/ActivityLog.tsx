@@ -85,7 +85,7 @@ export function ActivityLog({ events }: { events: LogEntry[] }) {
                   {detailStr && (
                     <span className="text-[var(--text-secondary)] ml-1 break-all">{detailStr}</span>
                   )}
-                  {!action && !detailStr && e.data?.error && (
+                  {!action && !detailStr && !!e.data?.error && (
                     <span className="text-[var(--danger)]"> ERROR: {String(e.data.error)}</span>
                   )}
                 </span>
