@@ -29,15 +29,19 @@ async def create_approval(
     approval_id = str(uuid4())
     now = datetime.now(timezone.utc)
 
-    # --- Auto-approve for low-cost actions ---
+    # --- Auto-approve for low-cost actions or if CEO auto-mode is on ---
     auto_approved = False
-    cost_value = _extract_cost(details, description)
-    if cost_value is not None and cost_value < settings.auto_approve_below_usd:
+    if settings.ceo_auto_mode:
         auto_approved = True
-        logger.info(
-            f"Auto-approving {approval_id}: cost ${cost_value:.2f} < "
-            f"threshold ${settings.auto_approve_below_usd:.2f}"
-        )
+        logger.info(f"Auto-approving {approval_id}: CEO auto-mode is ON")
+    else:
+        cost_value = _extract_cost(details, description)
+        if cost_value is not None and cost_value < settings.auto_approve_below_usd:
+            auto_approved = True
+            logger.info(
+                f"Auto-approving {approval_id}: cost ${cost_value:.2f} < "
+                f"threshold ${settings.auto_approve_below_usd:.2f}"
+            )
 
     status = ApprovalStatus.APPROVED if auto_approved else ApprovalStatus.PENDING
 

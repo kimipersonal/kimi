@@ -230,6 +230,8 @@ async def create_agent(
     skills: list[str] | None = None,
     network_enabled: bool = False,
     few_shot_examples: list[dict] | None = None,
+    standing_instructions: str | None = None,
+    work_interval_hours: float | None = None,
 ) -> dict:
     """Create an agent in DB and register it as a live runtime instance."""
     agent_id = str(uuid4())
@@ -261,6 +263,12 @@ async def create_agent(
     }
     if skills is not None:
         agent_config["skills"] = skills
+    if standing_instructions:
+        agent_config["standing_instructions"] = standing_instructions
+    if work_interval_hours is not None:
+        agent_config["work_interval_hours"] = work_interval_hours
+
+    work_interval_seconds = int((work_interval_hours or 1) * 3600)
 
     # Save to DB
     async with async_session() as session:
@@ -297,6 +305,8 @@ async def create_agent(
             browser_enabled=browser_enabled,
             skills=skills,
             network_enabled=network_enabled,
+            standing_instructions=standing_instructions,
+            work_interval_seconds=work_interval_seconds,
         )
     else:
         live_agent = BaseAgent(
@@ -311,6 +321,8 @@ async def create_agent(
             browser_enabled=browser_enabled,
             skills=skills,
             company_id=company_id,
+            standing_instructions=standing_instructions,
+            work_interval_seconds=work_interval_seconds,
         )
         live_agent.network_enabled = network_enabled
     registry.register(live_agent)
@@ -328,6 +340,8 @@ async def create_agent(
         "browser_enabled": browser_enabled,
         "skills": skills,
         "network_enabled": network_enabled,
+        "standing_instructions": standing_instructions,
+        "work_interval_hours": work_interval_hours,
     }
 
     await event_bus.broadcast("agent_hired", info, agent_id=agent_id)
@@ -349,6 +363,48 @@ async def destroy_agent(agent_id: str, reason: str = "") -> bool:
             logger.info(f"Agent deleted from DB: {agent_id} (reason: {reason})")
             return True
     return False
+
+
+async def dissolve_company(company_id: str, reason: str = "") -> dict:
+    """Dissolve a company: fire all agents, delete the company from DB."""
+    fired_agents = []
+
+    # Fire all agents in the company
+    async with async_session() as session:
+        result = await session.execute(
+            select(AgentModel).where(AgentModel.company_id == company_id)
+        )
+        agents = result.scalars().all()
+
+    for db_agent in agents:
+        await destroy_agent(db_agent.id, reason=f"Company dissolved: {reason}")
+        fired_agents.append({"id": db_agent.id, "name": db_agent.name})
+
+    # Delete the company
+    async with async_session() as session:
+        company = await session.get(Company, company_id)
+        if not company:
+            return {"success": False, "error": f"Company {company_id} not found"}
+        company_name = company.name
+        await session.delete(company)
+        await session.commit()
+
+    logger.info(f"Company dissolved: {company_name} ({company_id}), reason: {reason}")
+    await event_bus.broadcast(
+        "company_dissolved",
+        {
+            "company_id": company_id,
+            "company_name": company_name,
+            "fired_agents": fired_agents,
+            "reason": reason,
+        },
+    )
+    return {
+        "success": True,
+        "company_name": company_name,
+        "agents_fired": len(fired_agents),
+        "fired_agents": fired_agents,
+    }
 
 
 async def get_company_with_agents(company_id: str) -> dict | None:
@@ -432,6 +488,10 @@ async def restore_agents_from_db() -> int:
         from app.agents.trading import TRADING_ROLES, TradingAgent
 
         agent_config = db_agent.config or {}
+        standing_instructions = agent_config.get("standing_instructions")
+        work_interval_hours = agent_config.get("work_interval_hours", 1)
+        work_interval_seconds = int(work_interval_hours * 3600)
+
         live_agent: BaseAgent
         if db_agent.role in TRADING_ROLES:
             live_agent = TradingAgent(
@@ -442,6 +502,12 @@ async def restore_agents_from_db() -> int:
                 model_tier=db_agent.model_tier.value,
                 tools=db_agent.tools or [],
                 company_id=db_agent.company_id,
+                sandbox_enabled=agent_config.get("sandbox_enabled", False),
+                browser_enabled=agent_config.get("browser_enabled", False),
+                skills=agent_config.get("skills"),
+                network_enabled=agent_config.get("network_enabled", False),
+                standing_instructions=standing_instructions,
+                work_interval_seconds=work_interval_seconds,
             )
         else:
             live_agent = BaseAgent(
@@ -455,6 +521,8 @@ async def restore_agents_from_db() -> int:
                 browser_enabled=agent_config.get("browser_enabled", False),
                 skills=agent_config.get("skills"),
                 company_id=db_agent.company_id,
+                standing_instructions=standing_instructions,
+                work_interval_seconds=work_interval_seconds,
             )
             live_agent.network_enabled = agent_config.get("network_enabled", False)
         registry.register(live_agent)

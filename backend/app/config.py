@@ -68,6 +68,7 @@ class Settings(BaseSettings):
     # Agent settings
     approval_timeout_hours: int = 24
     auto_approve_below_usd: float = 10.0
+    ceo_auto_mode: bool = False  # When True, CEO auto-approves all actions (no human approval needed)
     conversation_history_size: int = 20  # messages kept in CEO's rolling context
 
     # Telegram settings

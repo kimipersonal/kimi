@@ -274,6 +274,8 @@ class TradingAgent(BaseAgent):
         browser_enabled: bool = False,
         skills: list[str] | None = None,
         network_enabled: bool = False,
+        standing_instructions: str | None = None,
+        work_interval_seconds: int = 3600,
     ):
         # Enable sandbox for analysts (code-based analysis) or if explicitly requested
         super().__init__(
@@ -288,6 +290,8 @@ class TradingAgent(BaseAgent):
             browser_enabled=browser_enabled,
             skills=skills,
             company_id=company_id,
+            standing_instructions=standing_instructions,
+            work_interval_seconds=work_interval_seconds,
         )
         self.network_enabled = network_enabled
 

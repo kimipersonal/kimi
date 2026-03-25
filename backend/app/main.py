@@ -201,8 +201,10 @@ async def lifespan(app: FastAPI):
                 event_type = event.get("event", "")
                 data = event.get("data", {})
 
-                # Only react to critical events
-                if event_type not in ("agent_stuck", "task_failed"):
+                # React to important events
+                if event_type not in (
+                    "agent_stuck", "task_failed", "agent_report", "task_completed"
+                ):
                     continue
 
                 # Don't react to CEO's own events to avoid loops
@@ -214,13 +216,33 @@ async def lifespan(app: FastAPI):
                         prompt = (
                             f"[SYSTEM ALERT] Agent {data.get('agent_id')} is stuck in "
                             f"{data.get('status')} state for {data.get('stuck_seconds')}s. "
-                            f"Check agent health, restart if needed, and report the issue."
+                            f"Use check_agent_health, restart the agent if needed, and report the issue."
                         )
                     elif event_type == "task_failed":
                         prompt = (
                             f"[SYSTEM ALERT] Task {data.get('task_id', 'unknown')} failed "
                             f"for agent {data.get('agent_id', 'unknown')}. "
+                            f"Error: {str(data.get('error', ''))[:300]}. "
                             f"Check what happened and take corrective action."
+                        )
+                    elif event_type == "agent_report":
+                        priority = data.get("priority", "medium")
+                        # Only auto-react to high/critical priority reports
+                        if priority not in ("high", "critical"):
+                            continue
+                        prompt = (
+                            f"[AGENT REPORT — {priority.upper()}] "
+                            f"Agent {data.get('agent_name', data.get('agent_id', 'unknown'))} "
+                            f"reports: \"{data.get('title', 'No title')}\" — "
+                            f"{str(data.get('content', ''))[:500]}. "
+                            f"Review and take action if needed."
+                        )
+                    elif event_type == "task_completed":
+                        prompt = (
+                            f"[TASK COMPLETED] Task {data.get('task_id', 'unknown')} "
+                            f"completed by agent {data.get('agent_name', data.get('agent_id', 'unknown'))}. "
+                            f"Result preview: {str(data.get('result', ''))[:300]}. "
+                            f"Determine if any follow-up action is needed."
                         )
                     else:
                         continue
@@ -234,16 +256,43 @@ async def lifespan(app: FastAPI):
         except asyncio.CancelledError:
             pass
 
+    async def _ceo_proactive_loop():
+        """CEO proactively checks operations every 2 hours."""
+        await asyncio.sleep(120)  # let startup settle
+        while True:
+            try:
+                prompt = (
+                    "[SCHEDULED REVIEW] Perform your periodic operations review:\n"
+                    "1) Use check_agent_health — restart any stuck or errored agents.\n"
+                    "2) Use get_costs — review daily spending. If >80% of budget, "
+                    "consider pausing non-essential agents and report to Owner.\n"
+                    "3) Use check_status — verify all companies are healthy.\n"
+                    "4) If any issues found, take corrective action.\n"
+                    "5) Keep responses brief — this is a routine check."
+                )
+                logger.info("CEO proactive review starting...")
+                await asyncio.wait_for(ceo.run(prompt), timeout=180)
+            except asyncio.TimeoutError:
+                logger.warning("CEO proactive review timed out")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(f"CEO proactive loop error: {e}")
+            await asyncio.sleep(7200)  # every 2 hours
+
     async def _ceo_startup_review():
         """One-time: CEO reviews all companies/agents after startup (with delay)."""
         await asyncio.sleep(30)  # Let everything settle first
         if company_count > 0 or agent_count > 0:
             try:
                 prompt = (
-                    "[SYSTEM STARTUP] The system has just started. "
-                    "Use check_status and check_agent_health to review all companies and agents. "
-                    "If any agents are stuck or in error state, restart them. "
-                    "Send a brief startup report to the Owner."
+                    "[SYSTEM STARTUP] The system has just started. You must:\n"
+                    "1) Use check_status to review all companies and agents.\n"
+                    "2) Use check_agent_health to find stuck or errored agents. Restart them.\n"
+                    "3) Use list_schedules to check your recurring tasks.\n"
+                    "4) If no recurring health check schedule exists, create one:\n"
+                    "   schedule_task for yourself: 'check_agent_health and restart stuck agents' hourly.\n"
+                    "5) Send a brief startup report to the Owner summarizing the current state."
                 )
                 logger.info("CEO performing startup review...")
                 await asyncio.wait_for(ceo.run(prompt), timeout=180)
@@ -256,6 +305,7 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_approval_expiry_loop(), name="approval_expiry"),
         asyncio.create_task(_daily_cost_reset_loop(), name="daily_cost_reset"),
         asyncio.create_task(_ceo_event_reactor(), name="ceo_event_reactor"),
+        asyncio.create_task(_ceo_proactive_loop(), name="ceo_proactive_loop"),
         asyncio.create_task(_ceo_startup_review(), name="ceo_startup_review"),
     ]
 

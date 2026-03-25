@@ -69,8 +69,10 @@ YOUR RESPONSIBILITIES:
 
 YOUR TOOLS:
 - create_company: Create a new company/department with a name and type
-- hire_agent: Add a new agent to a company with a specific role
+- hire_agent: Add a new agent to a company with a specific role. You can give agents
+  "standing_instructions" so they work autonomously on a schedule (e.g., market scanning every hour).
 - fire_agent: Remove an agent from a company
+- dissolve_company: Dissolve an entire company and fire all its agents
 - assign_task: Delegate a task to a specific agent
 - check_status: Check the status of your companies and agents
 - check_agent_health: Check if any agents are stuck, unresponsive, or in error
@@ -152,6 +154,7 @@ class CEOAgent(BaseAgent):
                 "create_company",
                 "hire_agent",
                 "fire_agent",
+                "dissolve_company",
                 "assign_task",
                 "check_status",
                 "check_agent_health",
@@ -318,6 +321,14 @@ class CEOAgent(BaseAgent):
                                 },
                                 "description": "Few-shot examples to guide the agent's behavior. Each example has an input and expected output.",
                             },
+                            "standing_instructions": {
+                                "type": "string",
+                                "description": "Autonomous standing task the agent should perform periodically without being asked. E.g., 'Scan EUR/USD, GBP/USD for trading signals every cycle'. If set, the agent will run this task automatically on a schedule.",
+                            },
+                            "work_interval_hours": {
+                                "type": "number",
+                                "description": "How often (in hours) the agent should execute its standing instructions. Default: 1 hour. E.g., 0.5 = every 30 min, 4 = every 4 hours.",
+                            },
                         },
                         "required": ["company_id", "name", "role", "instructions"],
                     },
@@ -341,6 +352,27 @@ class CEOAgent(BaseAgent):
                             },
                         },
                         "required": ["agent_id", "reason"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "dissolve_company",
+                    "description": "Dissolve an entire company: fires all its agents and deletes the company. Use when a company is no longer needed or performing poorly.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "company_id": {
+                                "type": "string",
+                                "description": "ID of the company to dissolve",
+                            },
+                            "reason": {
+                                "type": "string",
+                                "description": "Reason for dissolving the company",
+                            },
+                        },
+                        "required": ["company_id", "reason"],
                     },
                 },
             },
@@ -723,6 +755,8 @@ class CEOAgent(BaseAgent):
                 return await self._tool_hire_agent(arguments)
             case "fire_agent":
                 return await self._tool_fire_agent(arguments)
+            case "dissolve_company":
+                return await self._tool_dissolve_company(arguments)
             case "assign_task":
                 return await self._tool_assign_task(arguments)
             case "check_status":
@@ -828,6 +862,8 @@ class CEOAgent(BaseAgent):
                 skills=args.get("skills"),
                 network_enabled=args.get("network_enabled", False),
                 few_shot_examples=args.get("few_shot_examples"),
+                standing_instructions=args.get("standing_instructions"),
+                work_interval_hours=args.get("work_interval_hours"),
             )
             await self.log_activity(
                 "agent_hired",
@@ -876,6 +912,26 @@ class CEOAgent(BaseAgent):
                 }
             )
         return json.dumps({"success": False, "error": f"Agent {agent_id} not found."})
+
+    async def _tool_dissolve_company(self, args: dict) -> str:
+        from app.services.company_manager import dissolve_company
+
+        company_id = args["company_id"]
+        reason = args.get("reason", "No reason given")
+        try:
+            result = await dissolve_company(company_id, reason)
+            if result.get("success"):
+                await self.log_activity(
+                    "company_dissolved",
+                    {
+                        "company_id": company_id,
+                        "reason": reason,
+                        "agents_fired": result.get("agents_fired", 0),
+                    },
+                )
+            return json.dumps(result, indent=2)
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)})
 
     async def _tool_assign_task(self, args: dict) -> str:
         from app.services.task_queue import task_queue

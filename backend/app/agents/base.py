@@ -48,6 +48,8 @@ class BaseAgent:
         browser_enabled: bool = False,
         skills: list[str] | None = None,
         company_id: str | None = None,
+        standing_instructions: str | None = None,
+        work_interval_seconds: int = 3600,
     ):
         self.agent_id = agent_id
         self.name = name
@@ -60,11 +62,14 @@ class BaseAgent:
         self.browser_enabled = browser_enabled
         self.skills = skills  # list of skill names (None = all enabled)
         self.company_id = company_id
+        self.standing_instructions = standing_instructions
+        self.work_interval_seconds = work_interval_seconds
         self.network_enabled = False  # set externally
         self._status = AgentStatus.IDLE
         self._paused = asyncio.Event()
         self._paused.set()  # Not paused initially
         self._stopped = False
+        self._autonomous_task: asyncio.Task | None = None
         self._graph = self._build_graph()
 
     @property
@@ -115,10 +120,24 @@ class BaseAgent:
         self._paused.set()
         await self._set_status(AgentStatus.IDLE)
         await self.log_activity("agent_started")
+        # Start autonomous work loop if standing instructions exist
+        if self.standing_instructions and self._autonomous_task is None:
+            self._autonomous_task = asyncio.create_task(
+                self._autonomous_loop(),
+                name=f"autonomous_{self.agent_id}",
+            )
 
     async def stop(self):
         self._stopped = True
         self._paused.set()  # Unblock if paused so it can exit
+        # Cancel autonomous loop
+        if self._autonomous_task and not self._autonomous_task.done():
+            self._autonomous_task.cancel()
+            try:
+                await self._autonomous_task
+            except asyncio.CancelledError:
+                pass
+            self._autonomous_task = None
         await self._set_status(AgentStatus.STOPPED)
         await self.log_activity("agent_stopped")
 
@@ -131,6 +150,45 @@ class BaseAgent:
         self._paused.set()
         await self._set_status(AgentStatus.IDLE)
         await self.log_activity("agent_resumed")
+
+    # --- Autonomous Work Loop ---
+
+    async def _autonomous_loop(self):
+        """Run standing instructions periodically if configured."""
+        await asyncio.sleep(60)  # initial settle time
+        while not self._stopped:
+            try:
+                await self._paused.wait()  # respect pause
+                if self._stopped:
+                    break
+                prompt = (
+                    f"[STANDING INSTRUCTIONS] Execute your standing task:\n"
+                    f"{self.standing_instructions}\n\n"
+                    f"Complete the work, then use report_to_ceo to report "
+                    f"any important findings or results."
+                )
+                await self.log_activity(
+                    "autonomous_run",
+                    {"instructions": self.standing_instructions[:200]},
+                )
+                await asyncio.wait_for(
+                    self.run(prompt), timeout=300  # 5 min timeout
+                )
+            except asyncio.TimeoutError:
+                logger.warning(
+                    f"Autonomous task timed out for agent {self.name}"
+                )
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.error(
+                    f"Autonomous loop error for {self.name}: {e}"
+                )
+            # Wait for next cycle
+            try:
+                await asyncio.sleep(self.work_interval_seconds)
+            except asyncio.CancelledError:
+                break
 
     # --- LangGraph ---
 
