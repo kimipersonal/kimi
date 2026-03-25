@@ -151,6 +151,52 @@ class Scheduler:
         await self._save_to_redis()
         return True
 
+    async def add_one_shot_task(
+        self,
+        agent_id: str,
+        description: str,
+        delay_seconds: int,
+        created_by: str = "ceo",
+    ) -> dict:
+        """Schedule a one-time task that runs after a delay, then auto-removes."""
+        task_id = f"once_{str(uuid4())[:8]}"
+        task = ScheduledTask(
+            task_id=task_id,
+            agent_id=agent_id,
+            description=description,
+            interval_seconds=delay_seconds,
+            created_by=created_by,
+        )
+        async with self._lock:
+            self._tasks[task_id] = task
+            # Start a one-shot loop that executes once then removes itself
+            task._handle = asyncio.create_task(
+                self._run_one_shot(task), name=f"oneshot_{task_id}"
+            )
+        logger.info(
+            f"One-shot task {task_id}: '{description}' for {agent_id} "
+            f"in {delay_seconds}s"
+        )
+        return task.to_dict()
+
+    async def _run_one_shot(self, task: ScheduledTask) -> None:
+        """Execute a task once after a delay, then auto-remove."""
+        try:
+            await asyncio.sleep(task.interval_seconds)
+            if not task.enabled:
+                return
+            await self._execute_task(task)
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"One-shot task {task.task_id} error: {e}")
+        finally:
+            # Auto-remove after execution
+            async with self._lock:
+                self._tasks.pop(task.task_id, None)
+                await self._save_to_redis()
+            logger.info(f"One-shot task {task.task_id} completed and removed")
+
     def list_tasks(self) -> list[dict]:
         """List all scheduled tasks."""
         return [t.to_dict() for t in self._tasks.values()]

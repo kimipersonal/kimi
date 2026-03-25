@@ -190,9 +190,73 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"Daily cost reset error: {e}")
 
+    async def _ceo_event_reactor():
+        """Background loop: CEO reacts to critical system events."""
+        from app.services.event_bus import event_bus
+
+        subscriber = event_bus.subscribe("dashboard")
+        try:
+            while True:
+                event = await subscriber.get()
+                event_type = event.get("event", "")
+                data = event.get("data", {})
+
+                # Only react to critical events
+                if event_type not in ("agent_stuck", "task_failed"):
+                    continue
+
+                # Don't react to CEO's own events to avoid loops
+                if data.get("agent_id") == "ceo":
+                    continue
+
+                try:
+                    if event_type == "agent_stuck":
+                        prompt = (
+                            f"[SYSTEM ALERT] Agent {data.get('agent_id')} is stuck in "
+                            f"{data.get('status')} state for {data.get('stuck_seconds')}s. "
+                            f"Check agent health, restart if needed, and report the issue."
+                        )
+                    elif event_type == "task_failed":
+                        prompt = (
+                            f"[SYSTEM ALERT] Task {data.get('task_id', 'unknown')} failed "
+                            f"for agent {data.get('agent_id', 'unknown')}. "
+                            f"Check what happened and take corrective action."
+                        )
+                    else:
+                        continue
+
+                    logger.info(f"CEO reacting to {event_type}: {prompt[:100]}...")
+                    await asyncio.wait_for(ceo.run(prompt), timeout=120)
+                except asyncio.TimeoutError:
+                    logger.warning(f"CEO reaction to {event_type} timed out")
+                except Exception as e:
+                    logger.error(f"CEO reaction to {event_type} failed: {e}")
+        except asyncio.CancelledError:
+            pass
+
+    async def _ceo_startup_review():
+        """One-time: CEO reviews all companies/agents after startup (with delay)."""
+        await asyncio.sleep(30)  # Let everything settle first
+        if company_count > 0 or agent_count > 0:
+            try:
+                prompt = (
+                    "[SYSTEM STARTUP] The system has just started. "
+                    "Use check_status and check_agent_health to review all companies and agents. "
+                    "If any agents are stuck or in error state, restart them. "
+                    "Send a brief startup report to the Owner."
+                )
+                logger.info("CEO performing startup review...")
+                await asyncio.wait_for(ceo.run(prompt), timeout=180)
+            except asyncio.TimeoutError:
+                logger.warning("CEO startup review timed out")
+            except Exception as e:
+                logger.error(f"CEO startup review failed: {e}")
+
     _bg_tasks = [
         asyncio.create_task(_approval_expiry_loop(), name="approval_expiry"),
         asyncio.create_task(_daily_cost_reset_loop(), name="daily_cost_reset"),
+        asyncio.create_task(_ceo_event_reactor(), name="ceo_event_reactor"),
+        asyncio.create_task(_ceo_startup_review(), name="ceo_startup_review"),
     ]
 
     # Wire budget alerts → Telegram

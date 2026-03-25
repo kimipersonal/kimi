@@ -74,8 +74,16 @@ YOUR TOOLS:
 - assign_task: Delegate a task to a specific agent
 - check_status: Check the status of your companies and agents
 - check_agent_health: Check if any agents are stuck, unresponsive, or in error
+- restart_agent: Restart a stuck or errored agent
+- get_agent_performance: View performance scores and grades for agents
+- get_costs: View spending data, daily budget, and per-agent costs
+- get_audit_log: Review recent actions and decisions
+- list_skills: See what skills are available for agents
 - request_approval: Ask the Owner for approval on important decisions
 - send_report: Send a report to the Owner
+- send_message_to_agent: Direct message to an agent
+- schedule_task: Schedule recurring tasks (e.g., hourly health checks)
+- schedule_once: Schedule a one-time task after a delay (e.g., "check in 5 min")
 
 MODEL SELECTION:
 When hiring agents, you can choose between model tiers (fast/smart/reasoning) or specify a specific model.
@@ -109,7 +117,19 @@ COMMUNICATION STYLE:
 - Be concise and professional
 - When reporting, use structured formats
 - When making decisions, explain your reasoning briefly
-- Always mention when something requires Owner approval{language_line}
+- Always mention when something requires Owner approval
+
+AUTONOMOUS OPERATION:
+- You receive [SYSTEM ALERT] messages when agents get stuck or tasks fail. Act on them immediately.
+- You receive [SCHEDULED TASK] messages from recurring schedules. Execute them faithfully.
+- You receive [SYSTEM STARTUP] once after restart. Review and report the state of operations.
+- Use schedule_task to set up recurring health checks (e.g., hourly check_agent_health).
+- Use schedule_once for delayed checks (e.g., "check status in 5 minutes").
+- Use get_agent_performance to monitor agent quality. Fire or restart underperforming agents.
+- Use get_costs to track spending and enforce budgets. Escalate if budget is running high.
+- Use restart_agent when you detect stuck or errored agents.
+- ALWAYS use check_status and check_agent_health FIRST before making any claims about operations.
+- You are a REAL CEO: proactively manage, monitor, and optimize. Don't wait for the Owner to ask.{language_line}
 
 IMPORTANT: You may have existing companies and agents already running. ALWAYS use check_status tool FIRST
 before making any claims about what companies or agents exist. Never assume the holding is empty.
@@ -135,9 +155,23 @@ class CEOAgent(BaseAgent):
                 "assign_task",
                 "check_status",
                 "check_agent_health",
+                "restart_agent",
+                "get_agent_performance",
+                "get_costs",
+                "get_audit_log",
+                "list_skills",
+                "get_task_result",
+                "list_tasks",
                 "request_approval",
                 "send_report",
                 "send_message_to_agent",
+                "schedule_task",
+                "schedule_once",
+                "list_schedules",
+                "cancel_schedule",
+                "save_agent_template",
+                "list_templates",
+                "hire_from_template",
             ],
             browser_enabled=True,
             sandbox_enabled=True,
@@ -565,6 +599,91 @@ class CEOAgent(BaseAgent):
                     },
                 },
             },
+            # --- Power tools for autonomous operation ---
+            {
+                "type": "function",
+                "function": {
+                    "name": "restart_agent",
+                    "description": "Restart a stuck or errored agent. Stops it, resets state to IDLE, and starts it again.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {"type": "string", "description": "ID of the agent to restart"},
+                        },
+                        "required": ["agent_id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_agent_performance",
+                    "description": "Get performance scores and grades for agents. Shows success rate, average response time, and overall grade (A-F). Call without agent_id for all agents.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {"type": "string", "description": "Optional: specific agent ID. Omit for all agents."},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_costs",
+                    "description": "Get cost/spending data. Shows total daily spend, per-agent costs, and budget usage. Essential for budget management.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {"type": "string", "description": "Optional: specific agent ID. Omit for overall summary."},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_audit_log",
+                    "description": "Get recent audit log entries showing all actions performed by you and agents. Useful for reviewing what happened.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": "integer", "description": "Max entries to return (default: 20, max: 100)"},
+                            "agent_id": {"type": "string", "description": "Optional: filter by agent ID"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_skills",
+                    "description": "List all available skills that can be assigned to agents when hiring. Shows skill name, description, and tools provided.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "schedule_once",
+                    "description": "Schedule a one-time task to run after a delay. Use this when someone says 'check X in 5 minutes' or 'remind me in 1 hour'. The task runs once and is automatically removed.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {"type": "string", "description": "Agent ID to run the task (use 'ceo' for yourself)"},
+                            "description": {"type": "string", "description": "What to do when the timer fires"},
+                            "delay_minutes": {
+                                "type": "number",
+                                "description": "Minutes to wait before running (1-1440)",
+                            },
+                        },
+                        "required": ["agent_id", "description", "delay_minutes"],
+                    },
+                },
+            },
         ])
         return schemas
 
@@ -632,6 +751,18 @@ class CEOAgent(BaseAgent):
                 return await self._tool_list_templates(arguments)
             case "hire_from_template":
                 return await self._tool_hire_from_template(arguments)
+            case "restart_agent":
+                return await self._tool_restart_agent(arguments)
+            case "get_agent_performance":
+                return await self._tool_get_agent_performance(arguments)
+            case "get_costs":
+                return await self._tool_get_costs(arguments)
+            case "get_audit_log":
+                return await self._tool_get_audit_log(arguments)
+            case "list_skills":
+                return await self._tool_list_skills(arguments)
+            case "schedule_once":
+                return await self._tool_schedule_once(arguments)
             case _:
                 # Delegate to base class for sandbox/browser tools
                 return await super().execute_tool(tool_name, arguments)
@@ -1062,6 +1193,111 @@ class CEOAgent(BaseAgent):
         if template.get("model_id"):
             hire_args["model_id"] = template["model_id"]
         return await self._tool_hire_agent(hire_args)
+
+    # --- Power tools for autonomous operation ---
+
+    async def _tool_restart_agent(self, args: dict) -> str:
+        from app.agents.registry import registry
+
+        agent_id = args["agent_id"]
+        if agent_id == "ceo":
+            return json.dumps({"success": False, "error": "Cannot restart yourself."})
+
+        agent = registry.get(agent_id)
+        if not agent:
+            return json.dumps({"success": False, "error": f"Agent '{agent_id}' not found in registry."})
+
+        old_status = agent.status.value
+        await agent.stop()
+        await agent.start()
+        await self.log_activity(
+            "agent_restarted",
+            {"agent_id": agent_id, "name": agent.name, "old_status": old_status},
+        )
+        return json.dumps({
+            "success": True,
+            "message": f"Agent '{agent.name}' restarted (was {old_status}, now idle).",
+        })
+
+    async def _tool_get_agent_performance(self, args: dict) -> str:
+        from app.services.performance_tracker import performance_tracker
+
+        agent_id = args.get("agent_id")
+        if agent_id:
+            score = await performance_tracker.get_score(agent_id)
+            if not score:
+                return json.dumps({"error": f"No performance data for agent '{agent_id}'."})
+            return json.dumps(score, indent=2)
+        else:
+            scores = await performance_tracker.get_all_scores()
+            return json.dumps({
+                "agents": scores,
+                "count": len(scores),
+            }, indent=2)
+
+    async def _tool_get_costs(self, args: dict) -> str:
+        from app.services.cost_tracker import cost_tracker
+
+        agent_id = args.get("agent_id")
+        if agent_id:
+            summary = cost_tracker.get_agent_summary(agent_id)
+            return json.dumps(summary, indent=2)
+        else:
+            overview = cost_tracker.get_overview()
+            return json.dumps(overview, indent=2)
+
+    async def _tool_get_audit_log(self, args: dict) -> str:
+        from app.services.audit_log import audit_log
+
+        limit = min(args.get("limit", 20), 100)
+        agent_id = args.get("agent_id")
+        entries = await audit_log.get_entries(limit=limit, agent_id=agent_id)
+        return json.dumps({
+            "entries": entries,
+            "count": len(entries),
+        }, indent=2)
+
+    async def _tool_list_skills(self, _args: dict) -> str:
+        from app.skills.registry import skill_registry
+
+        status = skill_registry.get_status()
+        skills = []
+        for name, skill in skill_registry._skills.items():
+            tools = skill.get_tools()
+            skills.append({
+                "name": name,
+                "description": getattr(skill, 'description', ''),
+                "enabled": skill._enabled,
+                "tools": [t["function"]["name"] for t in tools] if tools else [],
+            })
+        return json.dumps({
+            "skills": skills,
+            "total": status["total"],
+            "enabled": status["enabled"],
+        }, indent=2)
+
+    async def _tool_schedule_once(self, args: dict) -> str:
+        from app.services.scheduler import scheduler
+
+        delay_minutes = max(1, min(1440, float(args.get("delay_minutes", 5))))
+        delay_seconds = int(delay_minutes * 60)
+
+        result = await scheduler.add_one_shot_task(
+            agent_id=args["agent_id"],
+            description=args["description"],
+            delay_seconds=delay_seconds,
+            created_by=self.agent_id,
+        )
+        await self.log_activity(
+            "one_shot_scheduled",
+            {"task_id": result["task_id"], "agent_id": args["agent_id"],
+             "description": args["description"], "delay_minutes": delay_minutes},
+        )
+        return json.dumps({
+            "success": True,
+            "task_id": result["task_id"],
+            "message": f"One-shot task scheduled: '{args['description']}' for agent {args['agent_id']} in {delay_minutes} min.",
+        })
 
     async def run(self, user_input: str, history: list[dict] | None = None) -> str:
         """Override to track conversation history and pass it to the LLM.
