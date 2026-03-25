@@ -65,6 +65,20 @@ export default function Dashboard() {
     }
   }
 
+  const handleChatSendStream = async (
+    message: string,
+    onStep: (step: import('@/lib/api').StreamStep) => void,
+  ): Promise<string> => {
+    setChatLoading(true)
+    try {
+      const response = await api.chatWithAgentStream('ceo', message, onStep)
+      await refreshData()
+      return response
+    } finally {
+      setChatLoading(false)
+    }
+  }
+
   if (loading) return <LoadingSpinner message="Loading dashboard..." />
 
   return (
@@ -101,6 +115,7 @@ export default function Dashboard() {
           agentId="ceo"
           agentName="CEO"
           onSend={handleChatSend}
+          onSendStream={handleChatSendStream}
           loading={chatLoading}
         />
         <ActivityLog events={events} />

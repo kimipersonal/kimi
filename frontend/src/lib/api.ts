@@ -85,6 +85,17 @@ export interface WSEvent {
   timestamp?: string
 }
 
+export interface StreamStep {
+  type: 'step' | 'status' | 'error'
+  action?: string
+  agent_name?: string
+  details?: Record<string, unknown>
+  level?: string
+  old_status?: string
+  new_status?: string
+  error?: string
+}
+
 export interface AgentCost {
   agent_id: string
   total_calls: number
@@ -192,6 +203,45 @@ export const api = {
       method: 'POST',
       body: JSON.stringify({ message }),
     }),
+
+  chatWithAgentStream: async (
+    agentId: string,
+    message: string,
+    onStep: (step: StreamStep) => void,
+  ): Promise<string> => {
+    const res = await fetch(`${API_BASE}/api/agents/${agentId}/chat/stream`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message }),
+    })
+    if (!res.ok) throw new Error(`API error: ${res.status}`)
+    const reader = res.body?.getReader()
+    if (!reader) throw new Error('No response body')
+
+    const decoder = new TextDecoder()
+    let finalResponse = ''
+    let buffer = ''
+
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      buffer += decoder.decode(value, { stream: true })
+      const lines = buffer.split('\n')
+      buffer = lines.pop() || ''
+      for (const line of lines) {
+        if (!line.startsWith('data: ')) continue
+        try {
+          const data = JSON.parse(line.slice(6))
+          if (data.type === 'done') {
+            finalResponse = data.response
+          } else if (data.type !== 'heartbeat') {
+            onStep(data as StreamStep)
+          }
+        } catch { /* skip malformed */ }
+      }
+    }
+    return finalResponse
+  },
 
   // Companies
   getCompanies: () => fetchAPI<Company[]>('/api/dashboard/companies'),

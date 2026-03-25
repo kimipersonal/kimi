@@ -31,9 +31,9 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
 
     # LLM Model tiers (Vertex AI model identifiers)
-    llm_fast: str = "google/gemini-3.1-flash-lite-preview"
+    llm_fast: str = "gemini-2.5-flash-lite"
     llm_smart: str = "deepseek-ai/deepseek-v3.2-maas"
-    llm_reasoning: str = "claude-sonnet-4-6"
+    llm_reasoning: str = "gemini-2.5-pro"
 
     # Telegram
     telegram_bot_token: str = ""

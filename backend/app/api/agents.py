@@ -1,8 +1,13 @@
 """Agent API endpoints — manage and interact with agents."""
 
+import asyncio
+import json
+
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import StreamingResponse
 from app.agents.registry import registry
 from app.models.schemas import AgentCommand
+from app.services.event_bus import event_bus
 
 router = APIRouter(prefix="/api/agents", tags=["agents"])
 
@@ -121,3 +126,77 @@ async def chat_with_agent(agent_id: str, body: dict):
 
     output = await agent.run(message)
     return {"agent_id": agent_id, "response": output}
+
+
+@router.post("/{agent_id}/chat/stream")
+async def chat_with_agent_stream(agent_id: str, body: dict):
+    """SSE streaming chat — sends real-time thinking/tool/status events during agent execution."""
+    agent = registry.get(agent_id)
+    if not agent:
+        raise HTTPException(status_code=404, detail="Agent not found")
+
+    message = body.get("message", "")
+    if not message:
+        raise HTTPException(status_code=400, detail="Message is required")
+
+    async def event_stream():
+        # Subscribe to events for this agent
+        subscriber = event_bus.subscribe("dashboard")
+        run_task = asyncio.create_task(agent.run(message))
+
+        try:
+            while not run_task.done():
+                try:
+                    event = await asyncio.wait_for(subscriber.get(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    # Send heartbeat to keep connection alive
+                    yield f"data: {json.dumps({'type': 'heartbeat'})}\n\n"
+                    continue
+
+                ev_data = event.get("data", {})
+                ev_agent_id = ev_data.get("agent_id") or event.get("agent_id")
+                event_type = event.get("event", "")
+
+                # Only forward events for the requested agent
+                if ev_agent_id != agent_id:
+                    continue
+
+                if event_type == "log":
+                    action = ev_data.get("action", "")
+                    step = {
+                        "type": "step",
+                        "action": action,
+                        "agent_name": ev_data.get("name", ""),
+                        "details": ev_data.get("details"),
+                        "level": ev_data.get("level", "info"),
+                    }
+                    yield f"data: {json.dumps(step)}\n\n"
+
+                elif event_type == "agent_state_change":
+                    step = {
+                        "type": "status",
+                        "old_status": ev_data.get("old_status"),
+                        "new_status": ev_data.get("new_status"),
+                        "agent_name": ev_data.get("name", ""),
+                    }
+                    yield f"data: {json.dumps(step)}\n\n"
+
+            # Get the final result
+            output = await run_task
+            yield f"data: {json.dumps({'type': 'done', 'response': output})}\n\n"
+
+        except Exception as e:
+            yield f"data: {json.dumps({'type': 'error', 'error': str(e)})}\n\n"
+        finally:
+            if not run_task.done():
+                run_task.cancel()
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
