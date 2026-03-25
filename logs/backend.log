@@ -11056,3 +11056,107 @@ WARNING:  Invalid HTTP request received.
 2026-03-25 06:21:00,095 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
 2026-03-25 06:21:10,122 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
 2026-03-25 06:21:20,145 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:21:30,177 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:21:40,205 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:21:50,234 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:22:00,265 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:22:10,401 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:22:20,422 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:22:30,446 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:22:40,466 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:22:50,490 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:23:00,523 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:23:10,548 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:23:20,571 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:23:30,593 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:23:40,619 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:23:50,663 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:24:00,696 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:24:10,731 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:24:20,756 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:24:30,779 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:24:40,804 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:24:50,837 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:25:00,863 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:25:10,896 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:25:20,927 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:25:30,962 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:25:40,993 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:25:51,019 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:26:01,043 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:26:11,068 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:26:21,091 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:26:31,140 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:26:41,175 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:26:51,229 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:27:01,268 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:27:11,304 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:27:21,327 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:27:31,349 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:27:41,374 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:27:51,399 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:28:01,428 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:28:11,476 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:28:21,500 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:28:31,521 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:28:41,544 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:28:51,572 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:29:01,600 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:29:11,632 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:29:21,659 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:29:31,691 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:29:41,728 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:29:51,762 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:30:01,790 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:30:11,864 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:30:21,890 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:30:31,912 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:30:41,938 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:30:51,959 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:31:01,981 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:31:12,015 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:31:22,036 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:31:32,060 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:31:42,084 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:31:52,108 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:32:02,132 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:32:12,161 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:32:22,188 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:32:32,216 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:32:42,238 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:32:52,263 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+INFO:     64.181.201.187:26236 - "HEAD / HTTP/1.1" 405 Method Not Allowed
+WARNING:  Invalid HTTP request received.
+INFO:     64.181.201.187:26266 - "GET / HTTP/1.1" 200 OK
+2026-03-25 06:33:02,287 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:33:12,313 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:33:22,340 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:33:32,370 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:33:42,398 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:33:52,449 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+/home/kimi/projects/kimi/backend/.venv/lib/python3.12/site-packages/websockets/exceptions.py:125: DeprecationWarning: ConnectionClosed.code is deprecated; use Protocol.close_code or ConnectionClosed.rcvd.code
+  warnings.warn(  # deprecated in 13.1 - 2024-09-21
+INFO:     connection closed
+2026-03-25 06:33:58,843 | asyncio                   | ERROR   | Task exception was never retrieved
+future: <Task finished name='Task-18908' coro=<_receive_commands_with_filter() done, defined at /home/kimi/projects/kimi/backend/app/api/websocket.py:67> exception=WebSocketDisconnect(1001, None)>
+Traceback (most recent call last):
+  File "/home/kimi/projects/kimi/backend/app/api/websocket.py", line 71, in _receive_commands_with_filter
+    data = await websocket.receive_json()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/home/kimi/projects/kimi/backend/.venv/lib/python3.12/site-packages/starlette/websockets.py", line 135, in receive_json
+    self._raise_on_disconnect(message)
+  File "/home/kimi/projects/kimi/backend/.venv/lib/python3.12/site-packages/starlette/websockets.py", line 113, in _raise_on_disconnect
+    raise WebSocketDisconnect(message["code"], message.get("reason"))
+starlette.websockets.WebSocketDisconnect: (1001, None)
+INFO:     87.237.234.198:0 - "GET /api/agents HTTP/1.0" 200 OK
+/home/kimi/projects/kimi/backend/.venv/lib/python3.12/site-packages/websockets/legacy/server.py:1178: DeprecationWarning: remove second argument of ws_handler
+  warnings.warn("remove second argument of ws_handler", DeprecationWarning)
+INFO:     ('87.237.234.198', 0) - "WebSocket /ws/dashboard" [accepted]
+2026-03-25 06:34:00,673 | app.api.websocket         | INFO    | Dashboard WebSocket client connected
+INFO:     connection open
+INFO:     87.237.234.198:0 - "GET /api/dashboard/companies HTTP/1.0" 200 OK
+2026-03-25 06:34:02,473 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:34:12,498 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:34:22,522 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:34:32,550 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"
+2026-03-25 06:34:42,578 | httpx                     | INFO    | HTTP Request: POST https://api.telegram.org/bot8580235228:AAEacZODAbCD2EMTxL--bmfB1Dv22Su7RYs/getUpdates "HTTP/1.1 200 OK"

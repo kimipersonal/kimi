@@ -75,6 +75,12 @@ class BaseAgent:
         """Update status and broadcast to dashboard."""
         old = self._status
         self._status = new_status
+        # Update watchdog tracking
+        try:
+            from app.services.agent_watchdog import agent_watchdog
+            agent_watchdog.update_state(self.agent_id, new_status)
+        except Exception:
+            pass
         await event_bus.broadcast(
             "agent_state_change",
             {

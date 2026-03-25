@@ -154,6 +154,11 @@ async def lifespan(app: FastAPI):
 
     await health_monitor.start()
 
+    # Start agent watchdog (detects stuck agents)
+    from app.services.agent_watchdog import agent_watchdog
+
+    await agent_watchdog.start()
+
     # Schedule recurring background tasks
     async def _approval_expiry_loop():
         """Expire stale approvals every hour."""
@@ -273,6 +278,7 @@ async def lifespan(app: FastAPI):
     # Cancel background tasks
     for t in _bg_tasks:
         t.cancel()
+    await agent_watchdog.stop()
     await health_monitor.stop()
     await scheduler.stop_all()
     await cloudflare_tunnel.stop()

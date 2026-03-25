@@ -5,8 +5,10 @@ Extends the existing circuit breaker with:
 - Latency-weighted model selection
 - Cross-provider support (ready for Anthropic/OpenAI/Groq when keys are added)
 - Automatic tier rotation within same tier_hint
+- Per-call timeout protection (prevents agents from hanging forever)
 """
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, field
@@ -21,6 +23,8 @@ MODEL_COOLDOWN_SECONDS = 120
 # Max consecutive failures before extended cooldown
 MAX_CONSECUTIVE_FAILURES = 3
 EXTENDED_COOLDOWN_SECONDS = 600
+# Timeout for a single LLM call (seconds) — prevents infinite hangs
+LLM_CALL_TIMEOUT = 300  # 5 minutes max per call
 
 
 @dataclass
@@ -174,7 +178,10 @@ class ModelFailoverService:
         start = time.time()
         try:
             from litellm import acompletion
-            response = await cb.call(acompletion, **kwargs)
+            response = await asyncio.wait_for(
+                cb.call(acompletion, **kwargs),
+                timeout=LLM_CALL_TIMEOUT,
+            )
             latency_ms = (time.time() - start) * 1000
             health.record_success(latency_ms)
 
@@ -187,6 +194,10 @@ class ModelFailoverService:
                 output_tokens=usage.get("output_tokens", 0),
             )
             return result
+        except asyncio.TimeoutError:
+            health.record_failure()
+            logger.error(f"Model {model_id} timed out after {LLM_CALL_TIMEOUT}s")
+            raise TimeoutError(f"Model {model_id} timed out after {LLM_CALL_TIMEOUT}s")
         except CircuitOpenError:
             health.record_failure()
             raise

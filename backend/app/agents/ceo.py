@@ -73,6 +73,7 @@ YOUR TOOLS:
 - fire_agent: Remove an agent from a company
 - assign_task: Delegate a task to a specific agent
 - check_status: Check the status of your companies and agents
+- check_agent_health: Check if any agents are stuck, unresponsive, or in error
 - request_approval: Ask the Owner for approval on important decisions
 - send_report: Send a report to the Owner
 
@@ -133,6 +134,7 @@ class CEOAgent(BaseAgent):
                 "fire_agent",
                 "assign_task",
                 "check_status",
+                "check_agent_health",
                 "request_approval",
                 "send_report",
                 "send_message_to_agent",
@@ -347,6 +349,17 @@ class CEOAgent(BaseAgent):
                 "function": {
                     "name": "check_status",
                     "description": "Check the status of all companies and agents in the holding.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "check_agent_health",
+                    "description": "Check if any agents are stuck, unresponsive, or in error state. Returns stuck agents, their duration, and health summary. Use this when you suspect an agent is taking too long or not responding.",
                     "parameters": {
                         "type": "object",
                         "properties": {},
@@ -595,6 +608,8 @@ class CEOAgent(BaseAgent):
                 return await self._tool_assign_task(arguments)
             case "check_status":
                 return await self._tool_check_status(arguments)
+            case "check_agent_health":
+                return await self._tool_check_agent_health(arguments)
             case "get_task_result":
                 return await self._tool_get_task_result(arguments)
             case "list_tasks":
@@ -830,6 +845,48 @@ class CEOAgent(BaseAgent):
             },
             indent=2,
         )
+
+    async def _tool_check_agent_health(self, _args: dict) -> str:
+        from app.services.agent_watchdog import agent_watchdog
+        from app.agents.registry import registry
+
+        stuck = agent_watchdog.get_stuck_agents()
+        history = agent_watchdog.get_stuck_history()
+
+        # Also check for agents in ERROR state
+        error_agents = []
+        for agent_id, agent in registry._agents.items():
+            if agent.status == AgentStatus.ERROR:
+                error_agents.append({
+                    "agent_id": agent_id,
+                    "name": agent.name,
+                    "status": "error",
+                })
+            elif agent.status in (AgentStatus.THINKING, AgentStatus.ACTING):
+                # Check watchdog timing
+                ts = agent_watchdog._state_times.get(agent_id)
+                if ts:
+                    import time as _time
+                    elapsed = _time.time() - ts.entered_at
+                    if elapsed > 60:  # More than 1 minute
+                        stuck.append({
+                            "agent_id": agent_id,
+                            "name": agent.name,
+                            "status": agent.status.value,
+                            "stuck_seconds": round(elapsed),
+                            "alerted": ts.alerted,
+                        })
+
+        return json.dumps({
+            "stuck_agents": stuck,
+            "error_agents": error_agents,
+            "recent_stuck_history": history[-10:],
+            "summary": (
+                f"{len(stuck)} stuck agent(s), {len(error_agents)} in error state"
+                if stuck or error_agents
+                else "All agents are healthy"
+            ),
+        }, indent=2)
 
     async def _tool_request_approval(self, args: dict) -> str:
         from app.services.approval_service import create_approval

@@ -411,3 +411,16 @@ async def get_agent_tool_analytics(agent_id: str):
     """Get tool usage stats for a specific agent."""
     from app.services.tool_analytics import tool_analytics
     return tool_analytics.get_agent_stats(agent_id)
+
+
+# --- Agent Watchdog ---
+
+
+@router.get("/watchdog/stuck")
+async def get_stuck_agents():
+    """Get currently stuck agents and recent stuck history."""
+    from app.services.agent_watchdog import agent_watchdog
+    return {
+        "currently_stuck": agent_watchdog.get_stuck_agents(),
+        "recent_history": agent_watchdog.get_stuck_history(),
+    }
