@@ -187,6 +187,51 @@ async def lifespan(app: FastAPI):
 
     tool_analytics.load_from_redis()
 
+    # Load Phase 2 services from Redis
+    from app.services.voting_service import voting_service
+    from app.services.delegation_service import delegation_service
+    from app.services.company_kpi_service import company_kpi_service
+
+    await voting_service.load_from_redis()
+    await delegation_service.load_from_redis()
+    await company_kpi_service.load_from_redis()
+    logger.info("Phase 2 services loaded (voting, delegation, KPIs)")
+
+    # Load Phase 3 services
+    from app.services.auto_trade_executor import auto_trade_executor
+    from app.services.portfolio_risk_manager import portfolio_risk_manager
+    from app.services.market_alerts import market_alert_service
+
+    await auto_trade_executor.load_from_redis()
+    await portfolio_risk_manager.load_from_redis()
+    await market_alert_service.load_from_redis()
+    await market_alert_service.start(interval_seconds=60)
+    logger.info("Phase 3 services loaded (auto-trade, risk manager, market alerts)")
+
+    # Load Phase 4 services
+    from app.services.prompt_optimizer import prompt_optimizer
+    from app.services.tool_usage_optimizer import tool_usage_optimizer
+    from app.services.error_pattern_detector import error_pattern_detector
+    from app.services.ab_testing_service import ab_testing_service
+
+    await prompt_optimizer.load_from_redis()
+    await tool_usage_optimizer.load_from_redis()
+    await error_pattern_detector.load_from_redis()
+    await ab_testing_service.load_from_redis()
+    logger.info("Phase 4 services loaded (prompt optimizer, tool optimizer, error detector, A/B testing)")
+
+    # Load Phase 5 services
+    from app.services.tiered_approval import tiered_approval_service
+    from app.services.accountability_report import accountability_report_service
+    from app.services.rollback_service import rollback_service
+    from app.services.multi_owner import multi_owner_service
+
+    await tiered_approval_service.load_from_redis()
+    await accountability_report_service.load_from_redis()
+    await rollback_service.load_from_redis()
+    await multi_owner_service.load_from_redis()
+    logger.info("Phase 5 services loaded (tiered approval, accountability, rollback, multi-owner)")
+
     # Schedule recurring background tasks
     async def _approval_expiry_loop():
         """Expire stale approvals every hour."""
@@ -203,7 +248,7 @@ async def lifespan(app: FastAPI):
                 logger.error(f"Approval expiry task error: {e}")
 
     async def _daily_cost_reset_loop():
-        """Reset daily cost counters at midnight UTC."""
+        """Reset daily cost counters and budget enforcement at midnight UTC."""
         from datetime import datetime, timezone, timedelta
         while True:
             try:
@@ -212,7 +257,20 @@ async def lifespan(app: FastAPI):
                 seconds_until_midnight = (tomorrow - now).total_seconds()
                 await asyncio.sleep(seconds_until_midnight)
                 cost_tracker.reset_daily()
-                logger.info("Daily cost counters reset")
+                # Also reset budget enforcer daily state
+                from app.services.budget_enforcer import budget_enforcer
+                budget_enforcer.reset_daily()
+                # Also reset auto-trade daily counters
+                from app.services.auto_trade_executor import auto_trade_executor as _ate
+                _ate.reset_daily()
+                # Phase 4: daily error scan and prompt snapshots
+                try:
+                    await error_pattern_detector.scan_audit_log()
+                    await error_pattern_detector.save_to_redis()
+                    await prompt_optimizer.capture_all_snapshots()
+                except Exception as _p4e:
+                    logger.debug(f"Phase 4 daily tasks: {_p4e}")
+                logger.info("Daily cost counters and budget enforcement reset")
             except asyncio.CancelledError:
                 break
             except Exception as e:
@@ -329,12 +387,39 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"CEO startup review failed: {e}")
 
+    # --- CEO Self-Scheduling (auto-create essential recurring tasks) ---
+    async def _ceo_bootstrap_schedules():
+        """Bootstrap CEO's auto-schedules after startup settles."""
+        await asyncio.sleep(15)  # let scheduler load from Redis first
+        try:
+            from app.services.ceo_self_scheduler import bootstrap_ceo_schedules
+            result = await bootstrap_ceo_schedules()
+            if result.get("created"):
+                logger.info(f"CEO self-scheduler created {len(result['created'])} schedule(s)")
+            elif result.get("skipped"):
+                logger.info("CEO self-scheduler: schedules already exist")
+        except Exception as e:
+            logger.error(f"CEO self-scheduler failed: {e}")
+
+    # --- Daily Intelligence Report loop ---
+    async def _daily_report_loop():
+        """Run the daily report at configured UTC hour."""
+        try:
+            from app.services.ceo_self_scheduler import setup_daily_report_schedule
+            await setup_daily_report_schedule()
+        except asyncio.CancelledError:
+            pass
+        except Exception as e:
+            logger.error(f"Daily report loop failed: {e}")
+
     _bg_tasks = [
         asyncio.create_task(_approval_expiry_loop(), name="approval_expiry"),
         asyncio.create_task(_daily_cost_reset_loop(), name="daily_cost_reset"),
         asyncio.create_task(_ceo_event_reactor(), name="ceo_event_reactor"),
         asyncio.create_task(_ceo_proactive_loop(), name="ceo_proactive_loop"),
         asyncio.create_task(_ceo_startup_review(), name="ceo_startup_review"),
+        asyncio.create_task(_ceo_bootstrap_schedules(), name="ceo_bootstrap_schedules"),
+        asyncio.create_task(_daily_report_loop(), name="daily_report_loop"),
     ]
 
     # Wire budget alerts → Telegram
@@ -359,6 +444,38 @@ async def lifespan(app: FastAPI):
             logger.warning(f"Failed to send budget alert: {e}")
 
     cost_tracker.on_budget_alert(_budget_alert)
+
+    # Wire budget enforcer → Telegram + CEO notifications
+    from app.services.budget_enforcer import budget_enforcer
+
+    await budget_enforcer._ensure_loaded()
+
+    async def _budget_enforced(entity_id: str, reason: str):
+        """Notify owner and CEO when an agent/company is paused for budget."""
+        try:
+            if telegram_bot._running and telegram_bot._app and settings.telegram_owner_chat_id:
+                from telegram.constants import ParseMode
+                await telegram_bot._app.bot.send_message(
+                    chat_id=int(settings.telegram_owner_chat_id),
+                    text=f"🚫 <b>Budget Enforced</b>\n\n{reason}\n\n"
+                         f"Agent/company has been auto-paused.",
+                    parse_mode=ParseMode.HTML,
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send budget enforcement alert: {e}")
+        # Also notify CEO so it can take action
+        try:
+            prompt = (
+                f"[BUDGET ENFORCEMENT] {reason}\n"
+                f"The affected agent/company has been auto-paused. "
+                f"Review the situation with check_budget_status and decide "
+                f"if any reallocation or action is needed."
+            )
+            await asyncio.wait_for(ceo.run(prompt), timeout=120)
+        except Exception as e:
+            logger.warning(f"CEO budget reaction failed: {e}")
+
+    budget_enforcer.on_budget_exceeded(_budget_enforced)
 
     # Hook event bus → Telegram notifications
     from app.services.event_bus import event_bus
@@ -420,6 +537,7 @@ async def lifespan(app: FastAPI):
     # Cancel background tasks
     for t in _bg_tasks:
         t.cancel()
+    await market_alert_service.stop()
     await agent_watchdog.stop()
     await health_monitor.stop()
     await scheduler.stop_all()

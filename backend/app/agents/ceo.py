@@ -16,6 +16,7 @@ from uuid import uuid4
 
 from app.agents.base import BaseAgent
 from app.config import get_settings
+from app.db.models import AgentStatus
 from app.services.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
@@ -86,6 +87,86 @@ YOUR TOOLS:
 - send_message_to_agent: Direct message to an agent
 - schedule_task: Schedule recurring tasks (e.g., hourly health checks)
 - schedule_once: Schedule a one-time task after a delay (e.g., "check in 5 min")
+- set_agent_budget: Set daily spending limit for a specific agent
+- set_company_budget: Set daily spending limit for a company
+- check_budget_status: View all budget limits and enforcement state
+- generate_daily_report: Generate comprehensive daily intelligence report with all metrics
+- initiate_vote: Start a multi-agent vote/poll on a decision (agents vote APPROVE/REJECT/ABSTAIN)
+- get_vote_results: Check the result of a vote by its ID
+- list_votes: List all voting sessions and their outcomes
+- set_company_kpi: Set a KPI target for a company (e.g., "task_success_rate" target 90%)
+- get_company_kpis: View KPI dashboard for a specific company
+- get_all_kpis: View KPI dashboard for all companies
+- update_kpi_value: Manually update a KPI's current value
+- list_delegations: View all agent-to-agent delegations (peer-to-peer task handoffs)
+
+AUTONOMOUS TRADING EXECUTION:
+- Use set_auto_trade_mode to enable/configure automatic trade execution (disabled/conservative/moderate/aggressive).
+- When enabled, high-confidence trade signals with proper SL/TP are auto-executed without manual approval.
+- Conservative mode requires 90%+ confidence, 2:1+ risk:reward; Aggressive allows 70%+, 1:1+.
+- Use get_auto_trade_status to monitor daily auto-trade stats (executed, rejected, reasons).
+- Use calculate_position_size to determine optimal lot size based on equity, stop-loss, and risk %.
+- Use assess_portfolio_risk for a comprehensive risk assessment (drawdown, exposure, concentration).
+- Use update_risk_limits to configure portfolio risk thresholds (max drawdown, max exposure, etc.).
+- Use record_trade_journal to log trade outcomes for institutional learning.
+- Use query_trade_journal to search past trades semantically (e.g., "what EUR/USD strategies worked?").
+- Use get_trade_stats for aggregate trade performance metrics (win rate, profit factor, etc.).
+- Use create_market_alert to set price alerts (above/below thresholds, % changes).
+- Use list_market_alerts / cancel_market_alert to manage active alerts.
+
+CEO SELF-IMPROVEMENT:
+- Use analyze_prompts to capture agent prompt snapshots and analyze prompt→performance correlation.
+- Use get_prompt_recommendations to see specific improvement suggestions for underperforming agents.
+- Use analyze_tool_usage to identify unused, failing, or slow tools across the system.
+- Use get_agent_tool_profile to see which tools a specific agent uses most/least.
+- Use add_knowledge to build a shared knowledge base (lessons learned, best practices, strategies).
+- Use search_knowledge to semantically search the knowledge base before making decisions.
+- Use get_knowledge_stats to see KB size and category breakdown.
+- Use get_error_patterns to view recurring error patterns (timeouts, rate limits, failures).
+- Use get_error_summary for a quick overview of system health from error analysis.
+- Use scan_errors to scan audit logs for new error patterns.
+- Use create_ab_test to set up A/B tests comparing two agent strategies.
+- Use record_ab_result to log task outcomes for A/B test variants.
+- Use get_ab_results to compare variant performance and determine winners.
+- Use list_ab_tests to see all running/completed experiments.
+
+MULTI-AGENT VOTING:
+- Use initiate_vote to poll agents on important decisions (e.g., "Should we increase EUR/USD position?").
+- Agents respond with APPROVE, REJECT, or ABSTAIN with reasoning.
+- Votes have a deadline (30-600 seconds). Non-responders count as ABSTAIN.
+- After voting closes, you get a consensus result (approved/rejected/tied/no_quorum).
+- Use this for collaborative decisions instead of making unilateral calls.
+
+AGENT DELEGATION:
+- Agents can now delegate tasks directly to peers in their company (no CEO bottleneck).
+- All delegations are tracked and visible to you via list_delegations.
+- Delegation chains are limited to 3 levels deep to prevent loops.
+- You retain full visibility and can intervene if delegations go wrong.
+
+COMPANY KPIs:
+- Set measurable targets for each company using set_company_kpi.
+- Standard metrics: daily_cost_usd, task_success_rate, agent_count, avg_response_time_s.
+- KPIs auto-update from real system data when queried.
+- Use get_company_kpis to review performance against targets.
+- Companies are "on track" when they achieve 80%+ of their target.
+
+BUDGET ENFORCEMENT:
+- You can set daily spending limits per agent and per company.
+- When an agent exceeds its budget, it gets AUTO-PAUSED. You'll be notified.
+- Use check_budget_status to monitor budget enforcement state.
+- Use set_agent_budget/set_company_budget proactively for cost control.
+- The global daily budget is enforced automatically.
+
+DAILY INTELLIGENCE REPORT:
+- Every day a comprehensive report is auto-generated and sent via Telegram.
+- You can also generate one on demand using generate_daily_report.
+- The report covers: costs, performance, operations, trading, health, budgets, audit.
+- Use this data to make informed decisions about agent optimization.
+
+SELF-SCHEDULING:
+- On startup, essential schedules are auto-created (health check hourly, budget check 4h, performance review 6h).
+- You can add/modify/cancel schedules as needed.
+- You should proactively set up additional schedules when you identify needs.
 
 MODEL SELECTION:
 When hiring agents, you can choose between model tiers (fast/smart/reasoning) or specify a specific model.
@@ -184,6 +265,59 @@ class CEOAgent(BaseAgent):
                 "save_agent_template",
                 "list_templates",
                 "hire_from_template",
+                "set_agent_budget",
+                "set_company_budget",
+                "check_budget_status",
+                "generate_daily_report",
+                "initiate_vote",
+                "get_vote_results",
+                "list_votes",
+                "set_company_kpi",
+                "get_company_kpis",
+                "get_all_kpis",
+                "update_kpi_value",
+                "list_delegations",
+                "set_auto_trade_mode",
+                "get_auto_trade_status",
+                "calculate_position_size",
+                "assess_portfolio_risk",
+                "update_risk_limits",
+                "record_trade_journal",
+                "query_trade_journal",
+                "get_trade_stats",
+                "create_market_alert",
+                "list_market_alerts",
+                "cancel_market_alert",
+                "analyze_prompts",
+                "get_prompt_recommendations",
+                "analyze_tool_usage",
+                "get_agent_tool_profile",
+                "add_knowledge",
+                "search_knowledge",
+                "get_knowledge_stats",
+                "get_error_patterns",
+                "get_error_summary",
+                "scan_errors",
+                "create_ab_test",
+                "record_ab_result",
+                "get_ab_results",
+                "list_ab_tests",
+                # Phase 5: Advanced Governance
+                "evaluate_approval_tier",
+                "set_approval_thresholds",
+                "get_approval_thresholds",
+                "get_tier_analytics",
+                "get_audit_timeline",
+                "detect_audit_anomalies",
+                "get_action_breakdown",
+                "generate_accountability_report",
+                "get_accountability_stats",
+                "list_rollback_actions",
+                "request_rollback",
+                "get_rollback_history",
+                "list_owners",
+                "add_owner",
+                "get_owner_permissions",
             ],
             browser_enabled=True,
             sandbox_enabled=True,
@@ -762,6 +896,796 @@ class CEOAgent(BaseAgent):
                     },
                 },
             },
+            # --- Budget enforcement tools ---
+            {
+                "type": "function",
+                "function": {
+                    "name": "set_agent_budget",
+                    "description": "Set a daily spending limit for a specific agent. When the agent's daily cost exceeds this limit, it will be auto-paused. Set to 0 to remove the limit.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {"type": "string", "description": "ID of the agent to set budget for"},
+                            "daily_limit_usd": {
+                                "type": "number",
+                                "description": "Max daily spending in USD (e.g., 0.50). Set to 0 to remove limit.",
+                            },
+                        },
+                        "required": ["agent_id", "daily_limit_usd"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "set_company_budget",
+                    "description": "Set a daily spending limit for all agents in a company combined. When exceeded, all company agents are auto-paused. Set to 0 to remove.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "company_id": {"type": "string", "description": "ID of the company to set budget for"},
+                            "daily_limit_usd": {
+                                "type": "number",
+                                "description": "Max daily spending in USD for the entire company. Set to 0 to remove.",
+                            },
+                        },
+                        "required": ["company_id", "daily_limit_usd"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "check_budget_status",
+                    "description": "View all budget limits, enforcement state, and which agents/companies have been paused today due to budget overruns.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "generate_daily_report",
+                    "description": "Generate a comprehensive daily intelligence report covering costs, performance, operations, trading, health, budgets, and audit log. Returns both structured data and formatted text.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            # --- Phase 2: Multi-Agent Voting ---
+            {
+                "type": "function",
+                "function": {
+                    "name": "initiate_vote",
+                    "description": "Start a multi-agent vote on a decision. Each agent will respond APPROVE, REJECT, or ABSTAIN with reasoning. Returns vote_id to check results.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "question": {
+                                "type": "string",
+                                "description": "The question or proposal to vote on (e.g., 'Should we increase our EUR/USD long position?')",
+                            },
+                            "agent_ids": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "List of agent IDs to participate in the vote",
+                            },
+                            "deadline_seconds": {
+                                "type": "integer",
+                                "description": "Seconds to wait for responses (30-600, default: 120)",
+                            },
+                        },
+                        "required": ["question", "agent_ids"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_vote_results",
+                    "description": "Get the status and results of a voting session by its vote_id.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "vote_id": {
+                                "type": "string",
+                                "description": "The vote ID returned by initiate_vote",
+                            },
+                        },
+                        "required": ["vote_id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_votes",
+                    "description": "List all voting sessions, optionally filtered by status.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "status": {
+                                "type": "string",
+                                "enum": ["open", "closed", "expired"],
+                                "description": "Optional: filter by vote status",
+                            },
+                        },
+                    },
+                },
+            },
+            # --- Phase 2: Company KPIs ---
+            {
+                "type": "function",
+                "function": {
+                    "name": "set_company_kpi",
+                    "description": "Set a KPI target for a company. Standard metrics: daily_cost_usd, task_success_rate, agent_count, avg_response_time_s. You can also define custom metric names.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "company_id": {"type": "string", "description": "Company ID"},
+                            "company_name": {"type": "string", "description": "Company name (for display)"},
+                            "kpi_name": {"type": "string", "description": "KPI name (e.g., 'Task Success Rate')"},
+                            "metric": {
+                                "type": "string",
+                                "description": "Metric to measure: daily_cost_usd, task_success_rate, agent_count, avg_response_time_s, or a custom name",
+                            },
+                            "target_value": {"type": "number", "description": "Target value to achieve"},
+                            "unit": {"type": "string", "description": "Unit (e.g., '%', 'USD', 'seconds')"},
+                            "direction": {
+                                "type": "string",
+                                "enum": ["higher_is_better", "lower_is_better"],
+                                "description": "Whether higher or lower values are better (default: higher_is_better)",
+                            },
+                        },
+                        "required": ["company_id", "company_name", "kpi_name", "metric", "target_value"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_company_kpis",
+                    "description": "Get all KPIs and their current values for a specific company. Auto-updates standard metrics from real data.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "company_id": {"type": "string", "description": "Company ID to get KPIs for"},
+                        },
+                        "required": ["company_id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_all_kpis",
+                    "description": "Get KPI dashboards for all companies with summary health scores.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "update_kpi_value",
+                    "description": "Manually update the current value of a KPI (for custom metrics that can't be auto-computed).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "company_id": {"type": "string", "description": "Company ID"},
+                            "kpi_name": {"type": "string", "description": "Name of the KPI to update"},
+                            "current_value": {"type": "number", "description": "New current value"},
+                        },
+                        "required": ["company_id", "kpi_name", "current_value"],
+                    },
+                },
+            },
+            # --- Phase 2: Delegation visibility ---
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_delegations",
+                    "description": "View all agent-to-agent task delegations. Shows who delegated to whom, status, and results.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "status": {
+                                "type": "string",
+                                "enum": ["pending", "accepted", "in_progress", "completed", "failed", "rejected"],
+                                "description": "Optional: filter by delegation status",
+                            },
+                            "company_id": {
+                                "type": "string",
+                                "description": "Optional: filter by company ID",
+                            },
+                        },
+                    },
+                },
+            },
+            # --- Phase 3: Autonomous Trading Execution ---
+            {
+                "type": "function",
+                "function": {
+                    "name": "set_auto_trade_mode",
+                    "description": "Set auto-trade execution mode. Modes: disabled (off), conservative (90%+ confidence, 2:1 RR), moderate (80%+, 1.5:1), aggressive (70%+, 1:1).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "mode": {
+                                "type": "string",
+                                "enum": ["disabled", "conservative", "moderate", "aggressive"],
+                                "description": "Auto-trade mode",
+                            },
+                        },
+                        "required": ["mode"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_auto_trade_status",
+                    "description": "Get auto-trade executor status: current config, daily stats (trades executed/rejected), and recent execution log.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "calculate_position_size",
+                    "description": "Calculate optimal position size based on risk management. Uses account equity, stop-loss distance, and risk percentage.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {"type": "string", "description": "Trading symbol (e.g., EURUSD, BTCUSDT)"},
+                            "entry_price": {"type": "number", "description": "Expected entry price"},
+                            "stop_loss": {"type": "number", "description": "Stop-loss price level"},
+                            "risk_pct": {
+                                "type": "number",
+                                "description": "Risk per trade as % of equity (default 1.0)",
+                            },
+                        },
+                        "required": ["symbol", "entry_price", "stop_loss"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "assess_portfolio_risk",
+                    "description": "Perform comprehensive portfolio risk assessment: drawdown from peak, total exposure, per-position concentration, correlation analysis, and risk alerts.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {},
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "update_risk_limits",
+                    "description": "Update portfolio risk limits (max drawdown, max exposure, max single position size, etc.).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "max_drawdown_pct": {"type": "number", "description": "Max drawdown from peak equity (%)"},
+                            "max_total_exposure_pct": {"type": "number", "description": "Max total position value / equity (%)"},
+                            "max_single_position_pct": {"type": "number", "description": "Max single position / equity (%)"},
+                            "max_open_positions": {"type": "integer", "description": "Max number of open positions"},
+                            "auto_close_on_critical": {"type": "boolean", "description": "Auto-close positions at critical risk level"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "record_trade_journal",
+                    "description": "Record a trade outcome in the journal for learning. Stores with vector embedding for semantic search.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "trade_id": {"type": "string", "description": "Trade ID to record"},
+                            "symbol": {"type": "string", "description": "Trading symbol"},
+                            "direction": {"type": "string", "enum": ["buy", "sell"], "description": "Trade direction"},
+                            "entry_price": {"type": "number", "description": "Entry price"},
+                            "exit_price": {"type": "number", "description": "Exit price (if closed)"},
+                            "pnl": {"type": "number", "description": "Profit/loss amount"},
+                            "outcome": {
+                                "type": "string",
+                                "enum": ["win", "loss", "breakeven", "open"],
+                                "description": "Trade outcome",
+                            },
+                            "reasoning": {"type": "string", "description": "Why was this trade taken?"},
+                            "lessons": {"type": "string", "description": "What was learned from this trade?"},
+                        },
+                        "required": ["trade_id", "symbol", "direction", "entry_price"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "query_trade_journal",
+                    "description": "Search past trade journal entries semantically. Ask questions like 'what EUR/USD strategies worked?' or 'why did crypto trades fail last week?'.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Natural language search query"},
+                            "outcome_filter": {
+                                "type": "string",
+                                "enum": ["win", "loss", "breakeven"],
+                                "description": "Optional: filter by outcome",
+                            },
+                            "symbol_filter": {"type": "string", "description": "Optional: filter by symbol"},
+                            "limit": {"type": "integer", "description": "Max results (default 10)"},
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_trade_stats",
+                    "description": "Get aggregate trade statistics from the journal: win rate, profit factor, avg win/loss, total PnL, high-confidence win rate.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {"type": "string", "description": "Optional: filter by symbol"},
+                            "days": {"type": "integer", "description": "Lookback period in days (default 30)"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_market_alert",
+                    "description": "Set a price alert for a trading symbol. Get notified when price goes above/below a level or changes by a percentage.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "symbol": {"type": "string", "description": "Trading symbol (e.g., EURUSD, BTCUSDT)"},
+                            "alert_type": {
+                                "type": "string",
+                                "enum": ["price_above", "price_below", "pct_change"],
+                                "description": "Type of alert",
+                            },
+                            "threshold": {"type": "number", "description": "Price level or % change threshold"},
+                            "message": {"type": "string", "description": "Custom message when triggered"},
+                            "repeat": {"type": "boolean", "description": "Re-arm alert after triggering (default false)"},
+                        },
+                        "required": ["symbol", "alert_type", "threshold"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_market_alerts",
+                    "description": "List all market alerts with their status (active, triggered, cancelled).",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "status": {
+                                "type": "string",
+                                "enum": ["active", "triggered", "cancelled"],
+                                "description": "Optional: filter by status",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "cancel_market_alert",
+                    "description": "Cancel an active market alert by its ID.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "alert_id": {"type": "string", "description": "Alert ID to cancel"},
+                        },
+                        "required": ["alert_id"],
+                    },
+                },
+            },
+            # Phase 4: CEO Self-Improvement
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_prompts",
+                    "description": "Capture prompt snapshots for all agents and analyze prompt effectiveness. Shows top performers, underperformers, declining agents, and improvement recommendations.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_prompt_recommendations",
+                    "description": "Get specific prompt improvement recommendations for underperforming agents.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {"type": "string", "description": "Optional: specific agent ID"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "analyze_tool_usage",
+                    "description": "Analyze tool usage patterns across all agents. Identifies unused, failing, slow, and top-performing tools with actionable recommendations.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_agent_tool_profile",
+                    "description": "Get tool usage profile for a specific agent — which tools it uses most/least.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {"type": "string", "description": "Agent ID to profile"},
+                        },
+                        "required": ["agent_id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "add_knowledge",
+                    "description": "Add an entry to the shared knowledge base. Categories: lessons_learned, best_practices, market_insights, operational_rules, trading_strategies, error_solutions, agent_guidelines.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "content": {"type": "string", "description": "The knowledge text to store"},
+                            "category": {"type": "string", "description": "Knowledge category"},
+                            "tags": {
+                                "type": "array",
+                                "items": {"type": "string"},
+                                "description": "Optional search tags",
+                            },
+                            "importance": {"type": "number", "description": "0.0-1.0 importance (default 0.7)"},
+                        },
+                        "required": ["content"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "search_knowledge",
+                    "description": "Semantically search the shared knowledge base for relevant information.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string", "description": "Natural language search query"},
+                            "category": {"type": "string", "description": "Optional category filter"},
+                            "limit": {"type": "integer", "description": "Max results (default 10)"},
+                        },
+                        "required": ["query"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_knowledge_stats",
+                    "description": "Get knowledge base statistics: total entries, categories breakdown, capacity.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_error_patterns",
+                    "description": "View detected recurring error patterns across the system. Filter by severity or error type.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "severity": {
+                                "type": "string",
+                                "enum": ["low", "medium", "high", "critical"],
+                                "description": "Optional severity filter",
+                            },
+                            "error_type": {
+                                "type": "string",
+                                "description": "Optional error type filter (timeout, rate_limit, permission, connection, parse_error, api_error)",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_error_summary",
+                    "description": "Get a quick summary of system error health: total patterns, severity breakdown, top issues.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "scan_errors",
+                    "description": "Scan recent audit logs for new error patterns. Run periodically to keep error detection up-to-date.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "create_ab_test",
+                    "description": "Create an A/B test experiment comparing two agent strategies/configurations.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "name": {"type": "string", "description": "Experiment name"},
+                            "hypothesis": {"type": "string", "description": "What you're testing"},
+                            "agent_a_id": {"type": "string", "description": "Agent ID for variant A"},
+                            "agent_a_desc": {"type": "string", "description": "Description of variant A's strategy"},
+                            "agent_b_id": {"type": "string", "description": "Agent ID for variant B"},
+                            "agent_b_desc": {"type": "string", "description": "Description of variant B's strategy"},
+                            "max_tasks": {"type": "integer", "description": "Tasks per variant before concluding (default 20)"},
+                        },
+                        "required": ["name", "hypothesis", "agent_a_id", "agent_a_desc", "agent_b_id", "agent_b_desc"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "record_ab_result",
+                    "description": "Record a task result for an A/B test variant.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "experiment_id": {"type": "string", "description": "Experiment ID"},
+                            "variant": {"type": "string", "enum": ["A", "B"], "description": "Which variant"},
+                            "success": {"type": "boolean", "description": "Task completed successfully?"},
+                            "score": {"type": "number", "description": "Quality score 0-100"},
+                            "cost_usd": {"type": "number", "description": "Cost of this task in USD"},
+                            "tokens": {"type": "integer", "description": "Tokens used"},
+                            "time_s": {"type": "number", "description": "Time taken in seconds"},
+                        },
+                        "required": ["experiment_id", "variant", "success"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_ab_results",
+                    "description": "Get detailed results and comparison for an A/B test experiment.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "experiment_id": {"type": "string", "description": "Experiment ID"},
+                        },
+                        "required": ["experiment_id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_ab_tests",
+                    "description": "List all A/B test experiments, optionally filtered by status.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "status": {
+                                "type": "string",
+                                "enum": ["running", "completed", "cancelled"],
+                                "description": "Optional status filter",
+                            },
+                        },
+                    },
+                },
+            },
+            # Phase 5: Advanced Governance
+            {
+                "type": "function",
+                "function": {
+                    "name": "evaluate_approval_tier",
+                    "description": "Evaluate which approval tier an action falls into based on category and estimated cost. Returns: auto_approve, ceo_decide, or owner_approval.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "category": {"type": "string", "description": "Action category (trade, company_creation, hiring, firing, budget, general, tool_execution, data_access)"},
+                            "estimated_cost_usd": {"type": "number", "description": "Estimated cost of the action in USD"},
+                        },
+                        "required": ["category", "estimated_cost_usd"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "set_approval_thresholds",
+                    "description": "Set approval tier thresholds for a category. Below low_max=auto-approve, between low/medium=CEO decides, above medium_max=owner approval.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "category": {"type": "string", "description": "Category to configure"},
+                            "low_max_usd": {"type": "number", "description": "Max USD for auto-approve tier"},
+                            "medium_max_usd": {"type": "number", "description": "Max USD for CEO-decide tier (above = owner approval)"},
+                        },
+                        "required": ["category", "low_max_usd", "medium_max_usd"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_approval_thresholds",
+                    "description": "Get current approval tier thresholds for all categories or a specific one.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "category": {"type": "string", "description": "Optional: specific category to query"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_tier_analytics",
+                    "description": "Get analytics on approval tier routing decisions: distribution, auto-approve rate, costs.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "limit": {"type": "integer", "description": "Max decisions to analyse (default 100)"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_audit_timeline",
+                    "description": "Get a timeline of audit events bucketed by time intervals.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "hours": {"type": "integer", "description": "Hours to look back (default 24)"},
+                            "bucket_minutes": {"type": "integer", "description": "Bucket size in minutes (default 60)"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "detect_audit_anomalies",
+                    "description": "Detect anomalies in audit logs: action spikes, failure rate spikes, unusual patterns.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "sensitivity": {"type": "number", "description": "Z-score sensitivity (default 2.0, lower=more sensitive)"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_action_breakdown",
+                    "description": "Get a breakdown of actions by type, agent, and success rate for the given period.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "hours": {"type": "integer", "description": "Hours to look back (default 24)"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "generate_accountability_report",
+                    "description": "Generate a CEO accountability report: autonomous vs escalated actions, success rates, recommendations.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "period_hours": {"type": "integer", "description": "Period in hours (default 168 = 7 days)"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_accountability_stats",
+                    "description": "Get summary of all generated accountability reports.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_rollback_actions",
+                    "description": "List tracked reversible actions that can be rolled back.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "status": {"type": "string", "enum": ["available", "rolled_back", "expired", "failed"], "description": "Optional status filter"},
+                            "limit": {"type": "integer", "description": "Max results (default 50)"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "request_rollback",
+                    "description": "Request rollback of a previously tracked action. Requires owner approval for high-risk actions.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "rollback_id": {"type": "string", "description": "ID of the rollback action to execute"},
+                        },
+                        "required": ["rollback_id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_rollback_history",
+                    "description": "Get summary of rollback history: total tracked, available, completed rollbacks.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "list_owners",
+                    "description": "List all system owners and their roles/permissions.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "role": {"type": "string", "enum": ["admin", "approver", "viewer"], "description": "Optional role filter"},
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "add_owner",
+                    "description": "Add or update a system owner with role-based permissions.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "owner_id": {"type": "string", "description": "Unique owner identifier"},
+                            "name": {"type": "string", "description": "Owner display name"},
+                            "role": {"type": "string", "enum": ["admin", "approver", "viewer"], "description": "Owner role (default: viewer)"},
+                            "contact": {"type": "string", "description": "Optional contact info (email, telegram, etc.)"},
+                        },
+                        "required": ["owner_id", "name"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_owner_permissions",
+                    "description": "Get permissions for a specific owner by ID.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "owner_id": {"type": "string", "description": "Owner ID to check"},
+                        },
+                        "required": ["owner_id"],
+                    },
+                },
+            },
         ])
         return schemas
 
@@ -843,6 +1767,112 @@ class CEOAgent(BaseAgent):
                 return await self._tool_list_skills(arguments)
             case "schedule_once":
                 return await self._tool_schedule_once(arguments)
+            case "set_agent_budget":
+                return await self._tool_set_agent_budget(arguments)
+            case "set_company_budget":
+                return await self._tool_set_company_budget(arguments)
+            case "check_budget_status":
+                return await self._tool_check_budget_status(arguments)
+            case "generate_daily_report":
+                return await self._tool_generate_daily_report(arguments)
+            case "initiate_vote":
+                return await self._tool_initiate_vote(arguments)
+            case "get_vote_results":
+                return await self._tool_get_vote_results(arguments)
+            case "list_votes":
+                return await self._tool_list_votes(arguments)
+            case "set_company_kpi":
+                return await self._tool_set_company_kpi(arguments)
+            case "get_company_kpis":
+                return await self._tool_get_company_kpis(arguments)
+            case "get_all_kpis":
+                return await self._tool_get_all_kpis(arguments)
+            case "update_kpi_value":
+                return await self._tool_update_kpi_value(arguments)
+            case "list_delegations":
+                return await self._tool_list_delegations(arguments)
+            case "set_auto_trade_mode":
+                return await self._tool_set_auto_trade_mode(arguments)
+            case "get_auto_trade_status":
+                return await self._tool_get_auto_trade_status(arguments)
+            case "calculate_position_size":
+                return await self._tool_calculate_position_size(arguments)
+            case "assess_portfolio_risk":
+                return await self._tool_assess_portfolio_risk(arguments)
+            case "update_risk_limits":
+                return await self._tool_update_risk_limits(arguments)
+            case "record_trade_journal":
+                return await self._tool_record_trade_journal(arguments)
+            case "query_trade_journal":
+                return await self._tool_query_trade_journal(arguments)
+            case "get_trade_stats":
+                return await self._tool_get_trade_stats(arguments)
+            case "create_market_alert":
+                return await self._tool_create_market_alert(arguments)
+            case "list_market_alerts":
+                return await self._tool_list_market_alerts(arguments)
+            case "cancel_market_alert":
+                return await self._tool_cancel_market_alert(arguments)
+            # Phase 4: CEO Self-Improvement
+            case "analyze_prompts":
+                return await self._tool_analyze_prompts(arguments)
+            case "get_prompt_recommendations":
+                return await self._tool_get_prompt_recommendations(arguments)
+            case "analyze_tool_usage":
+                return await self._tool_analyze_tool_usage(arguments)
+            case "get_agent_tool_profile":
+                return await self._tool_get_agent_tool_profile(arguments)
+            case "add_knowledge":
+                return await self._tool_add_knowledge(arguments)
+            case "search_knowledge":
+                return await self._tool_search_knowledge(arguments)
+            case "get_knowledge_stats":
+                return await self._tool_get_knowledge_stats(arguments)
+            case "get_error_patterns":
+                return await self._tool_get_error_patterns(arguments)
+            case "get_error_summary":
+                return await self._tool_get_error_summary(arguments)
+            case "scan_errors":
+                return await self._tool_scan_errors(arguments)
+            case "create_ab_test":
+                return await self._tool_create_ab_test(arguments)
+            case "record_ab_result":
+                return await self._tool_record_ab_result(arguments)
+            case "get_ab_results":
+                return await self._tool_get_ab_results(arguments)
+            case "list_ab_tests":
+                return await self._tool_list_ab_tests(arguments)
+            # Phase 5: Advanced Governance
+            case "evaluate_approval_tier":
+                return await self._tool_evaluate_approval_tier(arguments)
+            case "set_approval_thresholds":
+                return await self._tool_set_approval_thresholds(arguments)
+            case "get_approval_thresholds":
+                return await self._tool_get_approval_thresholds(arguments)
+            case "get_tier_analytics":
+                return await self._tool_get_tier_analytics(arguments)
+            case "get_audit_timeline":
+                return await self._tool_get_audit_timeline(arguments)
+            case "detect_audit_anomalies":
+                return await self._tool_detect_audit_anomalies(arguments)
+            case "get_action_breakdown":
+                return await self._tool_get_action_breakdown(arguments)
+            case "generate_accountability_report":
+                return await self._tool_generate_accountability_report(arguments)
+            case "get_accountability_stats":
+                return await self._tool_get_accountability_stats(arguments)
+            case "list_rollback_actions":
+                return await self._tool_list_rollback_actions(arguments)
+            case "request_rollback":
+                return await self._tool_request_rollback(arguments)
+            case "get_rollback_history":
+                return await self._tool_get_rollback_history(arguments)
+            case "list_owners":
+                return await self._tool_list_owners(arguments)
+            case "add_owner":
+                return await self._tool_add_owner(arguments)
+            case "get_owner_permissions":
+                return await self._tool_get_owner_permissions(arguments)
             case _:
                 # Delegate to base class for sandbox/browser tools
                 return await super().execute_tool(tool_name, arguments)
@@ -1400,6 +2430,587 @@ class CEOAgent(BaseAgent):
             "task_id": result["task_id"],
             "message": f"One-shot task scheduled: '{args['description']}' for agent {args['agent_id']} in {delay_minutes} min.",
         })
+
+    # --- Budget enforcement tools ---
+
+    async def _tool_set_agent_budget(self, args: dict) -> str:
+        from app.services.budget_enforcer import budget_enforcer
+
+        agent_id = args["agent_id"]
+        daily_limit = float(args.get("daily_limit_usd", 0))
+
+        if daily_limit <= 0:
+            removed = await budget_enforcer.remove_agent_budget(agent_id)
+            if removed:
+                await self.log_activity(
+                    "agent_budget_removed", {"agent_id": agent_id}
+                )
+                return json.dumps({
+                    "success": True,
+                    "message": f"Budget limit removed for agent {agent_id}.",
+                })
+            return json.dumps({
+                "success": True,
+                "message": f"No budget limit was set for agent {agent_id}.",
+            })
+
+        await budget_enforcer.set_agent_budget(agent_id, daily_limit)
+        await self.log_activity(
+            "agent_budget_set",
+            {"agent_id": agent_id, "daily_limit_usd": daily_limit},
+        )
+        return json.dumps({
+            "success": True,
+            "message": f"Agent {agent_id} daily budget set to ${daily_limit:.2f}. "
+                       f"Agent will be auto-paused if exceeded.",
+        })
+
+    async def _tool_set_company_budget(self, args: dict) -> str:
+        from app.services.budget_enforcer import budget_enforcer
+
+        company_id = args["company_id"]
+        daily_limit = float(args.get("daily_limit_usd", 0))
+
+        if daily_limit <= 0:
+            removed = await budget_enforcer.remove_company_budget(company_id)
+            if removed:
+                await self.log_activity(
+                    "company_budget_removed", {"company_id": company_id}
+                )
+                return json.dumps({
+                    "success": True,
+                    "message": f"Budget limit removed for company {company_id}.",
+                })
+            return json.dumps({
+                "success": True,
+                "message": f"No budget limit was set for company {company_id}.",
+            })
+
+        await budget_enforcer.set_company_budget(company_id, daily_limit)
+        await self.log_activity(
+            "company_budget_set",
+            {"company_id": company_id, "daily_limit_usd": daily_limit},
+        )
+        return json.dumps({
+            "success": True,
+            "message": f"Company {company_id} daily budget set to ${daily_limit:.2f}. "
+                       f"All company agents will be auto-paused if exceeded.",
+        })
+
+    async def _tool_check_budget_status(self, _args: dict) -> str:
+        from app.services.budget_enforcer import budget_enforcer
+        from app.services.cost_tracker import cost_tracker
+
+        budgets = await budget_enforcer.get_budgets()
+
+        # Enrich with current spend vs budget for each configured agent
+        agent_details = []
+        for agent_id, limit in budgets.get("agent_budgets", {}).items():
+            summary = cost_tracker.get_agent_summary(agent_id)
+            spent = summary.get("cost_today_usd", 0)
+            agent_details.append({
+                "agent_id": agent_id,
+                "daily_limit_usd": limit,
+                "spent_today_usd": round(spent, 6),
+                "remaining_usd": round(max(0, limit - spent), 6),
+                "usage_pct": round(spent / limit * 100, 1) if limit > 0 else 0,
+                "paused": agent_id in budgets.get("paused_agents_today", []),
+            })
+
+        company_details = []
+        for company_id, limit in budgets.get("company_budgets", {}).items():
+            spent = budget_enforcer._get_company_cost_today(company_id)
+            company_details.append({
+                "company_id": company_id,
+                "daily_limit_usd": limit,
+                "spent_today_usd": round(spent, 6),
+                "remaining_usd": round(max(0, limit - spent), 6),
+                "usage_pct": round(spent / limit * 100, 1) if limit > 0 else 0,
+                "paused": company_id in budgets.get("paused_companies_today", []),
+            })
+
+        overview = cost_tracker.get_overview()
+
+        return json.dumps({
+            "global_daily_budget_usd": budgets.get("global_daily_budget_usd", 0),
+            "global_spent_today_usd": overview.get("cost_today_usd", 0),
+            "global_usage_pct": overview.get("budget_used_pct", 0),
+            "agent_budgets": agent_details,
+            "company_budgets": company_details,
+            "paused_agents_today": budgets.get("paused_agents_today", []),
+            "paused_companies_today": budgets.get("paused_companies_today", []),
+        }, indent=2)
+
+    async def _tool_generate_daily_report(self, _args: dict) -> str:
+        from app.services.daily_report import generate_daily_report, format_report_text
+
+        report = await generate_daily_report()
+        text = format_report_text(report)
+
+        return json.dumps({
+            "success": True,
+            "report": report,
+            "formatted_text": text,
+            "message": "Daily intelligence report generated. Use send_report to deliver it to the Owner.",
+        }, indent=2)
+
+    # --- Phase 2: Multi-Agent Voting tools ---
+
+    async def _tool_initiate_vote(self, args: dict) -> str:
+        from app.services.voting_service import voting_service
+
+        question = args["question"]
+        agent_ids = args["agent_ids"]
+        deadline = int(args.get("deadline_seconds", 120))
+
+        try:
+            session = await voting_service.initiate_vote(
+                question=question,
+                agent_ids=agent_ids,
+                initiated_by=self.agent_id,
+                deadline_seconds=deadline,
+            )
+            await self.log_activity(
+                "vote_initiated",
+                {
+                    "vote_id": session.vote_id,
+                    "question": question[:200],
+                    "participant_count": len(session.participants),
+                },
+            )
+            return json.dumps({
+                "success": True,
+                "vote_id": session.vote_id,
+                "participants": len(session.participants),
+                "deadline_seconds": session.deadline_seconds,
+                "message": f"Vote '{session.vote_id}' started with {len(session.participants)} participants. "
+                           f"Use get_vote_results(vote_id='{session.vote_id}') to check when complete.",
+            })
+        except ValueError as e:
+            return json.dumps({"success": False, "error": str(e)})
+        except Exception as e:
+            logger.error(f"Failed to initiate vote: {e}")
+            return json.dumps({"success": False, "error": str(e)})
+
+    async def _tool_get_vote_results(self, args: dict) -> str:
+        from app.services.voting_service import voting_service
+
+        vote_id = args["vote_id"]
+        session = voting_service.get_vote(vote_id)
+        if not session:
+            return json.dumps({"success": False, "error": f"Vote '{vote_id}' not found."})
+
+        return json.dumps(session.to_dict(), indent=2)
+
+    async def _tool_list_votes(self, args: dict) -> str:
+        from app.services.voting_service import voting_service, VoteStatus
+
+        status_filter = args.get("status")
+        status = VoteStatus(status_filter) if status_filter else None
+        votes = voting_service.get_all_votes(status=status)
+        return json.dumps({"votes": votes, "count": len(votes)}, indent=2)
+
+    # --- Phase 2: Company KPI tools ---
+
+    async def _tool_set_company_kpi(self, args: dict) -> str:
+        from app.services.company_kpi_service import company_kpi_service
+
+        try:
+            kpi = await company_kpi_service.set_kpi(
+                company_id=args["company_id"],
+                company_name=args["company_name"],
+                kpi_name=args["kpi_name"],
+                metric=args["metric"],
+                target_value=float(args["target_value"]),
+                unit=args.get("unit", ""),
+                direction=args.get("direction", "higher_is_better"),
+            )
+            await self.log_activity(
+                "kpi_set",
+                {
+                    "company_id": args["company_id"],
+                    "kpi_name": args["kpi_name"],
+                    "target": kpi.target_value,
+                },
+            )
+            return json.dumps({
+                "success": True,
+                "kpi": kpi.to_dict(),
+                "message": f"KPI '{args['kpi_name']}' set for company {args['company_name']}. "
+                           f"Target: {kpi.target_value}{kpi.unit}",
+            })
+        except Exception as e:
+            return json.dumps({"success": False, "error": str(e)})
+
+    async def _tool_get_company_kpis(self, args: dict) -> str:
+        from app.services.company_kpi_service import company_kpi_service
+
+        company_id = args["company_id"]
+
+        # Auto-update from real metrics before returning
+        await company_kpi_service.auto_update_from_metrics(company_id)
+
+        result = company_kpi_service.get_company_kpis(company_id)
+        if not result:
+            return json.dumps({
+                "success": False,
+                "error": f"No KPIs configured for company {company_id}. Use set_company_kpi first.",
+            })
+        return json.dumps(result, indent=2)
+
+    async def _tool_get_all_kpis(self, _args: dict) -> str:
+        from app.services.company_kpi_service import company_kpi_service
+
+        # Auto-update all companies
+        for cid in list(company_kpi_service._companies.keys()):
+            await company_kpi_service.auto_update_from_metrics(cid)
+
+        all_kpis = company_kpi_service.get_all_kpis()
+        return json.dumps({
+            "companies": all_kpis,
+            "total_companies": len(all_kpis),
+        }, indent=2)
+
+    async def _tool_update_kpi_value(self, args: dict) -> str:
+        from app.services.company_kpi_service import company_kpi_service
+
+        company_id = args["company_id"]
+        kpi_name = args["kpi_name"]
+        value = float(args["current_value"])
+
+        kpi = await company_kpi_service.update_kpi_value(company_id, kpi_name, value)
+        if not kpi:
+            return json.dumps({
+                "success": False,
+                "error": f"KPI '{kpi_name}' not found for company {company_id}.",
+            })
+        return json.dumps({
+            "success": True,
+            "kpi": kpi.to_dict(),
+            "message": f"KPI '{kpi_name}' updated to {value}{kpi.unit} "
+                       f"(target: {kpi.target_value}{kpi.unit}, "
+                       f"achievement: {kpi.achievement_pct}%)",
+        })
+
+    # --- Phase 2: Delegation visibility ---
+
+    async def _tool_list_delegations(self, args: dict) -> str:
+        from app.services.delegation_service import delegation_service, DelegationStatus
+
+        status_filter = args.get("status")
+        company_id = args.get("company_id")
+
+        if company_id:
+            delegations = delegation_service.get_company_delegations(company_id)
+        elif status_filter:
+            status = DelegationStatus(status_filter)
+            delegations = delegation_service.get_all_delegations(status=status)
+        else:
+            delegations = delegation_service.get_all_delegations()
+
+        return json.dumps({
+            "delegations": delegations,
+            "count": len(delegations),
+        }, indent=2)
+
+    # --- Phase 3: Autonomous Trading Execution ---
+
+    async def _tool_set_auto_trade_mode(self, args: dict) -> str:
+        from app.services.auto_trade_executor import auto_trade_executor
+        result = await auto_trade_executor.set_mode(args["mode"])
+        return json.dumps(result, indent=2)
+
+    async def _tool_get_auto_trade_status(self, _args: dict) -> str:
+        from app.services.auto_trade_executor import auto_trade_executor
+        return json.dumps(auto_trade_executor.get_status(), indent=2)
+
+    async def _tool_calculate_position_size(self, args: dict) -> str:
+        from app.services.position_calculator import position_calculator
+        result = await position_calculator.calculate_size(
+            symbol=args["symbol"],
+            entry_price=float(args["entry_price"]),
+            stop_loss=float(args["stop_loss"]),
+            risk_pct=float(args.get("risk_pct", 1.0)),
+        )
+        return json.dumps(result, indent=2)
+
+    async def _tool_assess_portfolio_risk(self, _args: dict) -> str:
+        from app.services.portfolio_risk_manager import portfolio_risk_manager
+        result = await portfolio_risk_manager.assess_risk()
+        return json.dumps(result, indent=2)
+
+    async def _tool_update_risk_limits(self, args: dict) -> str:
+        from app.services.portfolio_risk_manager import portfolio_risk_manager
+        result = await portfolio_risk_manager.update_limits(**args)
+        return json.dumps(result, indent=2)
+
+    async def _tool_record_trade_journal(self, args: dict) -> str:
+        from app.services.trade_journal import trade_journal
+        result = await trade_journal.record_trade(
+            trade_id=args["trade_id"],
+            symbol=args["symbol"],
+            direction=args["direction"],
+            entry_price=float(args["entry_price"]),
+            exit_price=float(args["exit_price"]) if args.get("exit_price") else None,
+            pnl=float(args["pnl"]) if args.get("pnl") else None,
+            outcome=args.get("outcome", "open"),
+            reasoning=args.get("reasoning", ""),
+            lessons=args.get("lessons", ""),
+            agent_id=self.agent_id,
+        )
+        return json.dumps(result, indent=2)
+
+    async def _tool_query_trade_journal(self, args: dict) -> str:
+        from app.services.trade_journal import trade_journal
+        results = await trade_journal.query_journal(
+            query=args["query"],
+            limit=int(args.get("limit", 10)),
+            outcome_filter=args.get("outcome_filter"),
+            symbol_filter=args.get("symbol_filter"),
+        )
+        return json.dumps({"results": results, "count": len(results)}, indent=2)
+
+    async def _tool_get_trade_stats(self, args: dict) -> str:
+        from app.services.trade_journal import trade_journal
+        result = await trade_journal.get_trade_stats(
+            symbol=args.get("symbol"),
+            days=int(args.get("days", 30)),
+        )
+        return json.dumps(result, indent=2)
+
+    async def _tool_create_market_alert(self, args: dict) -> str:
+        from app.services.market_alerts import market_alert_service
+        result = await market_alert_service.create_alert(
+            symbol=args["symbol"],
+            alert_type=args["alert_type"],
+            threshold=float(args["threshold"]),
+            created_by=self.agent_id,
+            message=args.get("message", ""),
+            repeat=args.get("repeat", False),
+        )
+        return json.dumps(result, indent=2)
+
+    async def _tool_list_market_alerts(self, args: dict) -> str:
+        from app.services.market_alerts import market_alert_service
+        alerts = market_alert_service.list_alerts(status_filter=args.get("status"))
+        return json.dumps({"alerts": alerts, "count": len(alerts)}, indent=2)
+
+    async def _tool_cancel_market_alert(self, args: dict) -> str:
+        from app.services.market_alerts import market_alert_service
+        result = await market_alert_service.cancel_alert(args["alert_id"])
+        return json.dumps(result, indent=2)
+
+    # --- Phase 4: CEO Self-Improvement Tools ---
+
+    async def _tool_analyze_prompts(self, args: dict) -> str:
+        from app.services.prompt_optimizer import prompt_optimizer
+        await prompt_optimizer.capture_all_snapshots()
+        analysis = await prompt_optimizer.analyze()
+        return json.dumps(analysis, indent=2)
+
+    async def _tool_get_prompt_recommendations(self, args: dict) -> str:
+        from app.services.prompt_optimizer import prompt_optimizer
+        agent_id = args.get("agent_id")
+        if agent_id:
+            history = await prompt_optimizer.get_agent_history(agent_id)
+            analysis = await prompt_optimizer.analyze()
+            recs = [r for r in analysis.get("recommendations", []) if r["agent_id"] == agent_id]
+            return json.dumps({"agent_id": agent_id, "history_snapshots": len(history), "recommendations": recs}, indent=2)
+        else:
+            analysis = await prompt_optimizer.analyze()
+            return json.dumps({"recommendations": analysis.get("recommendations", [])}, indent=2)
+
+    async def _tool_analyze_tool_usage(self, args: dict) -> str:
+        from app.services.tool_usage_optimizer import tool_usage_optimizer
+        result = await tool_usage_optimizer.analyze()
+        return json.dumps(result, indent=2)
+
+    async def _tool_get_agent_tool_profile(self, args: dict) -> str:
+        from app.services.tool_usage_optimizer import tool_usage_optimizer
+        result = await tool_usage_optimizer.get_agent_tool_profile(args["agent_id"])
+        return json.dumps(result, indent=2)
+
+    async def _tool_add_knowledge(self, args: dict) -> str:
+        from app.services.knowledge_base import knowledge_base
+        result = await knowledge_base.add_entry(
+            content=args["content"],
+            category=args.get("category", "general"),
+            tags=args.get("tags"),
+            importance=args.get("importance", 0.7),
+            source="ceo",
+        )
+        return json.dumps(result, indent=2)
+
+    async def _tool_search_knowledge(self, args: dict) -> str:
+        from app.services.knowledge_base import knowledge_base
+        results = await knowledge_base.search(
+            query=args["query"],
+            category=args.get("category"),
+            limit=args.get("limit", 10),
+        )
+        return json.dumps({"results": results, "count": len(results)}, indent=2)
+
+    async def _tool_get_knowledge_stats(self, args: dict) -> str:
+        from app.services.knowledge_base import knowledge_base
+        stats = await knowledge_base.get_stats()
+        return json.dumps(stats, indent=2)
+
+    async def _tool_get_error_patterns(self, args: dict) -> str:
+        from app.services.error_pattern_detector import error_pattern_detector
+        patterns = await error_pattern_detector.get_patterns(
+            severity=args.get("severity"),
+            error_type=args.get("error_type"),
+        )
+        return json.dumps({"patterns": patterns, "count": len(patterns)}, indent=2)
+
+    async def _tool_get_error_summary(self, args: dict) -> str:
+        from app.services.error_pattern_detector import error_pattern_detector
+        summary = await error_pattern_detector.get_summary()
+        return json.dumps(summary, indent=2)
+
+    async def _tool_scan_errors(self, args: dict) -> str:
+        from app.services.error_pattern_detector import error_pattern_detector
+        new_count = await error_pattern_detector.scan_audit_log()
+        summary = await error_pattern_detector.get_summary()
+        return json.dumps({"new_errors_found": new_count, "summary": summary}, indent=2)
+
+    async def _tool_create_ab_test(self, args: dict) -> str:
+        from app.services.ab_testing_service import ab_testing_service
+        result = await ab_testing_service.create_experiment(
+            name=args["name"],
+            hypothesis=args["hypothesis"],
+            agent_a_id=args["agent_a_id"],
+            agent_a_desc=args["agent_a_desc"],
+            agent_b_id=args["agent_b_id"],
+            agent_b_desc=args["agent_b_desc"],
+            max_tasks=args.get("max_tasks", 20),
+        )
+        return json.dumps(result, indent=2, default=str)
+
+    async def _tool_record_ab_result(self, args: dict) -> str:
+        from app.services.ab_testing_service import ab_testing_service
+        result = await ab_testing_service.record_result(
+            experiment_id=args["experiment_id"],
+            variant=args["variant"],
+            success=args["success"],
+            score=args.get("score", 0.0),
+            cost_usd=args.get("cost_usd", 0.0),
+            tokens=args.get("tokens", 0),
+            time_s=args.get("time_s", 0.0),
+        )
+        return json.dumps(result, indent=2, default=str)
+
+    async def _tool_get_ab_results(self, args: dict) -> str:
+        from app.services.ab_testing_service import ab_testing_service
+        result = await ab_testing_service.get_results(args["experiment_id"])
+        return json.dumps(result, indent=2, default=str)
+
+    async def _tool_list_ab_tests(self, args: dict) -> str:
+        from app.services.ab_testing_service import ab_testing_service
+        result = await ab_testing_service.list_experiments(status=args.get("status"))
+        return json.dumps(result, indent=2, default=str)
+
+    # --- Phase 5: Advanced Governance Tools ---
+
+    async def _tool_evaluate_approval_tier(self, args: dict) -> str:
+        from app.services.tiered_approval import tiered_approval_service
+        decision = tiered_approval_service.evaluate(
+            category=args["category"],
+            estimated_cost_usd=float(args.get("estimated_cost_usd", 0)),
+        )
+        from dataclasses import asdict
+        return json.dumps(asdict(decision), indent=2)
+
+    async def _tool_set_approval_thresholds(self, args: dict) -> str:
+        from app.services.tiered_approval import tiered_approval_service
+        result = await tiered_approval_service.set_thresholds(
+            category=args["category"],
+            low_max=float(args["low_max_usd"]),
+            medium_max=float(args["medium_max_usd"]),
+        )
+        return json.dumps(result, indent=2)
+
+    async def _tool_get_approval_thresholds(self, args: dict) -> str:
+        from app.services.tiered_approval import tiered_approval_service
+        result = tiered_approval_service.get_thresholds(category=args.get("category"))
+        return json.dumps(result, indent=2)
+
+    async def _tool_get_tier_analytics(self, args: dict) -> str:
+        from app.services.tiered_approval import tiered_approval_service
+        result = tiered_approval_service.get_analytics(limit=args.get("limit", 100))
+        return json.dumps(result, indent=2)
+
+    async def _tool_get_audit_timeline(self, args: dict) -> str:
+        from app.services.audit_analytics import audit_analytics_service
+        result = await audit_analytics_service.get_timeline(
+            hours=args.get("hours", 24),
+            bucket_minutes=args.get("bucket_minutes", 60),
+        )
+        return json.dumps(result, indent=2)
+
+    async def _tool_detect_audit_anomalies(self, args: dict) -> str:
+        from app.services.audit_analytics import audit_analytics_service
+        result = await audit_analytics_service.detect_anomalies(
+            sensitivity=float(args.get("sensitivity", 2.0))
+        )
+        return json.dumps(result, indent=2)
+
+    async def _tool_get_action_breakdown(self, args: dict) -> str:
+        from app.services.audit_analytics import audit_analytics_service
+        result = await audit_analytics_service.get_action_breakdown(
+            hours=args.get("hours", 24)
+        )
+        return json.dumps(result, indent=2)
+
+    async def _tool_generate_accountability_report(self, args: dict) -> str:
+        from app.services.accountability_report import accountability_report_service
+        result = await accountability_report_service.generate_report(
+            period_hours=args.get("period_hours", 168)
+        )
+        return json.dumps(result, indent=2, default=str)
+
+    async def _tool_get_accountability_stats(self, args: dict) -> str:
+        from app.services.accountability_report import accountability_report_service
+        result = accountability_report_service.get_stats()
+        return json.dumps(result, indent=2, default=str)
+
+    async def _tool_list_rollback_actions(self, args: dict) -> str:
+        from app.services.rollback_service import rollback_service
+        result = rollback_service.list_actions(
+            status=args.get("status"),
+            limit=args.get("limit", 50),
+        )
+        return json.dumps(result, indent=2, default=str)
+
+    async def _tool_request_rollback(self, args: dict) -> str:
+        from app.services.rollback_service import rollback_service
+        result = await rollback_service.execute_rollback(args["rollback_id"])
+        return json.dumps(result, indent=2, default=str)
+
+    async def _tool_get_rollback_history(self, args: dict) -> str:
+        from app.services.rollback_service import rollback_service
+        result = rollback_service.get_history()
+        return json.dumps(result, indent=2, default=str)
+
+    async def _tool_list_owners(self, args: dict) -> str:
+        from app.services.multi_owner import multi_owner_service
+        result = multi_owner_service.list_owners(role=args.get("role"))
+        return json.dumps(result, indent=2, default=str)
+
+    async def _tool_add_owner(self, args: dict) -> str:
+        from app.services.multi_owner import multi_owner_service
+        result = await multi_owner_service.add_owner(
+            owner_id=args["owner_id"],
+            name=args["name"],
+            role=args.get("role", "viewer"),
+            contact=args.get("contact", ""),
+        )
+        return json.dumps(result, indent=2, default=str)
+
+    async def _tool_get_owner_permissions(self, args: dict) -> str:
+        from app.services.multi_owner import multi_owner_service
+        result = multi_owner_service.get_permissions(args["owner_id"])
+        return json.dumps(result, indent=2, default=str)
 
     async def run(self, user_input: str, history: list[dict] | None = None) -> str:
         """Override to track conversation history and pass it to the LLM.

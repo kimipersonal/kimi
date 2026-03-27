@@ -273,6 +273,26 @@ class CostTracker:
         except Exception as e:
             logger.debug(f"Could not persist cost record to DB: {e}")
 
+        # Budget enforcement — check if agent/company exceeded limits
+        try:
+            from app.services.budget_enforcer import budget_enforcer
+
+            # Determine company_id from agent registry
+            company_id = None
+            try:
+                from app.agents.registry import registry
+                agent_obj = registry.get(agent_id)
+                if agent_obj:
+                    company_id = getattr(agent_obj, "company_id", None)
+            except Exception:
+                pass
+
+            enforcement = await budget_enforcer.check_and_enforce(agent_id, company_id)
+            if not enforcement.get("allowed", True):
+                logger.warning(f"Budget enforcement: {enforcement.get('reason')}")
+        except Exception as e:
+            logger.debug(f"Budget enforcement check failed: {e}")
+
     @staticmethod
     def _is_today(ts: datetime, today) -> bool:
         return ts.date() == today

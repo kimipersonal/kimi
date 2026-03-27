@@ -483,6 +483,22 @@ class BaseAgent:
                 },
             },
         })
+        # Peer-to-peer delegation (available to all agents)
+        schemas.append({
+            "type": "function",
+            "function": {
+                "name": "delegate_task",
+                "description": "Delegate a sub-task to another agent. The agent will work on it and return results. Use this to collaborate with peers without going through the CEO. Max chain depth: 3.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "agent_id": {"type": "string", "description": "ID of the agent to delegate to"},
+                        "task_description": {"type": "string", "description": "Detailed description of the sub-task"},
+                    },
+                    "required": ["agent_id", "task_description"],
+                },
+            },
+        })
         # Workspace tools (available if agent belongs to a company)
         if self.company_id:
             schemas.extend([
@@ -623,6 +639,8 @@ class BaseAgent:
             return await execute_sandbox_tool(tool_name, arguments, network_enabled=getattr(self, 'network_enabled', False))
         if tool_name == "message_agent":
             return await self._tool_message_agent(arguments)
+        if tool_name == "delegate_task":
+            return await self._tool_delegate_task(arguments)
         if tool_name == "report_to_ceo":
             return await self._tool_report_to_ceo(arguments)
         if tool_name in ("workspace_write", "workspace_read", "workspace_list"):
@@ -656,6 +674,31 @@ class BaseAgent:
             response = await target.run(msg_content)
             await send_message(target_id, self.agent_id, response, "chat")
             return _json.dumps({"success": True, "agent_name": target.name, "response": response})
+        except Exception as e:
+            return _json.dumps({"success": False, "error": str(e)})
+
+    async def _tool_delegate_task(self, args: dict) -> str:
+        """Delegate a sub-task to another agent via the delegation service."""
+        import json as _json
+        from app.services.delegation_service import delegation_service
+
+        try:
+            delegation = await delegation_service.delegate_task(
+                from_agent_id=self.agent_id,
+                to_agent_id=args["agent_id"],
+                task_description=args["task_description"],
+            )
+            return _json.dumps({
+                "success": True,
+                "delegation_id": delegation.delegation_id,
+                "to_agent": delegation.to_agent_name,
+                "status": delegation.status.value,
+                "message": f"Task delegated to {delegation.to_agent_name}. "
+                           f"Delegation ID: {delegation.delegation_id}. "
+                           f"The agent is working on it.",
+            })
+        except ValueError as e:
+            return _json.dumps({"success": False, "error": str(e)})
         except Exception as e:
             return _json.dumps({"success": False, "error": str(e)})
 
