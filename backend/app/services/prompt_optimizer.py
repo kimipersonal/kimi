@@ -4,6 +4,7 @@ Correlates agent system prompts with performance scores to identify
 high-performing prompt patterns and recommend changes for underperformers.
 """
 
+from app.db.database import redis_pool
 import json
 import logging
 from dataclasses import dataclass, field
@@ -213,21 +214,13 @@ class PromptOptimizer:
 
     async def _persist(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            await r.set(_REDIS_KEY, json.dumps(self._snapshots), ex=86400 * 30)
-            await r.aclose()
+            await redis_pool.set(_REDIS_KEY, json.dumps(self._snapshots), ex=86400 * 30)
         except Exception as e:
             logger.debug(f"Could not persist prompt optimizer: {e}")
 
     async def load_from_redis(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if raw:
                 self._snapshots = json.loads(raw)
                 total = sum(len(v) for v in self._snapshots.values())

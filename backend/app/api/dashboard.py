@@ -1,13 +1,14 @@
 """Dashboard API — overview, approvals, activity logs, settings, messaging."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
 from app.agents.registry import registry
+from app.api.auth import verify_api_key
 from app.models.schemas import DashboardOverview, ApprovalDecision
 from app.services.event_bus import event_bus
 
-router = APIRouter(prefix="/api/dashboard", tags=["dashboard"])
+router = APIRouter(prefix="/api/dashboard", tags=["dashboard"], dependencies=[Depends(verify_api_key)])
 
 
 @router.get("/overview", response_model=DashboardOverview)
@@ -203,7 +204,7 @@ async def get_cost_overview():
     """Get cost tracking overview with per-agent breakdowns."""
     from app.services.cost_tracker import cost_tracker
 
-    return cost_tracker.get_overview()
+    return await cost_tracker.get_overview()
 
 
 @router.get("/costs/{agent_id}")
@@ -233,6 +234,23 @@ async def get_circuit_breakers():
     return {"circuits": circuit_registry.get_all_status()}
 
 
+@router.post("/circuits/{model_name}/reset")
+async def reset_circuit_breaker(model_name: str):
+    """Forcibly reset a circuit breaker to CLOSED state.
+
+    Use this to recover a stuck-OPEN circuit without waiting for the
+    auto-recovery timeout (e.g. after deploying a fix that resolves the
+    root cause of the failures).
+    """
+    from app.services.circuit_breaker import circuit_registry
+
+    found = circuit_registry.reset(model_name)
+    if not found:
+        from fastapi import HTTPException
+        raise HTTPException(status_code=404, detail=f"No circuit breaker found for '{model_name}'")
+    return {"status": "reset", "model": model_name}
+
+
 # --- Audit Log ---
 
 
@@ -249,6 +267,68 @@ async def get_audit_log(
     return await audit_log.get_entries(
         agent_id=agent_id, action=action, source=source, limit=limit
     )
+
+
+# --- Scheduled Tasks ---
+
+
+class ScheduleUpdate(BaseModel):
+    description: str | None = None
+    interval_seconds: int | None = None
+
+
+@router.get("/schedules")
+async def list_schedules():
+    """List all scheduled recurring tasks."""
+    from app.services.scheduler import scheduler
+
+    return {"schedules": scheduler.list_tasks()}
+
+
+@router.put("/schedules/{task_id}")
+async def update_schedule(task_id: str, body: ScheduleUpdate):
+    """Update a scheduled task's description or interval."""
+    from app.services.scheduler import scheduler
+
+    result = await scheduler.update_task(
+        task_id, description=body.description, interval_seconds=body.interval_seconds
+    )
+    if not result:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return result
+
+
+@router.post("/schedules/{task_id}/pause")
+async def pause_schedule(task_id: str):
+    """Pause a scheduled task."""
+    from app.services.scheduler import scheduler
+
+    ok = await scheduler.pause_task(task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"status": "paused", "task_id": task_id}
+
+
+@router.post("/schedules/{task_id}/resume")
+async def resume_schedule(task_id: str):
+    """Resume a paused scheduled task."""
+    from app.services.scheduler import scheduler
+
+    ok = await scheduler.resume_task(task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"status": "resumed", "task_id": task_id}
+
+
+@router.delete("/schedules/{task_id}")
+async def delete_schedule(task_id: str):
+    """Delete a scheduled task."""
+    from app.services.scheduler import scheduler
+
+    ok = await scheduler.remove_task(task_id)
+    if not ok:
+        raise HTTPException(status_code=404, detail="Schedule not found")
+    return {"status": "deleted", "task_id": task_id}
 
 
 @router.get("/audit/stats")

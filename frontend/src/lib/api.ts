@@ -156,6 +156,17 @@ export interface SettingsUpdateResponse {
   current_tiers: { fast: string; smart: string; reasoning: string }
 }
 
+export interface ScheduledTask {
+  task_id: string
+  agent_id: string
+  description: string
+  interval_seconds: number
+  created_by: string
+  enabled: boolean
+  last_run: string | null
+  run_count: number
+}
+
 export interface SkillInfo {
   name: string
   display_name: string
@@ -283,6 +294,20 @@ export const api = {
   getCosts: () => fetchAPI<CostOverview>('/api/dashboard/costs'),
   getAgentCost: (agentId: string) => fetchAPI<AgentCost>(`/api/dashboard/costs/${agentId}`),
 
+  // Scheduled tasks
+  getSchedules: () => fetchAPI<{ schedules: ScheduledTask[] }>('/api/dashboard/schedules'),
+  pauseSchedule: (taskId: string) =>
+    fetchAPI<{ status: string }>(`/api/dashboard/schedules/${taskId}/pause`, { method: 'POST' }),
+  resumeSchedule: (taskId: string) =>
+    fetchAPI<{ status: string }>(`/api/dashboard/schedules/${taskId}/resume`, { method: 'POST' }),
+  deleteSchedule: (taskId: string) =>
+    fetchAPI<{ status: string }>(`/api/dashboard/schedules/${taskId}`, { method: 'DELETE' }),
+  updateSchedule: (taskId: string, data: { description?: string; interval_seconds?: number }) =>
+    fetchAPI<ScheduledTask>(`/api/dashboard/schedules/${taskId}`, {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+
   // Health
   getHealth: () => fetchAPI<HealthStatus>('/api/dashboard/health'),
   getCircuits: () => fetchAPI<{ circuits: CircuitStatus[] }>('/api/dashboard/circuits'),
@@ -302,5 +327,9 @@ export const api = {
     fetchAPI<Record<string, unknown>>(`/api/trading/signals/${signalId}/decide`, {
       method: 'POST',
       body: JSON.stringify({ approved, reason }),
+    }),
+  closeTrade: (tradeId: string) =>
+    fetchAPI<Record<string, unknown>>(`/api/trading/close/${tradeId}`, {
+      method: 'POST',
     }),
 }

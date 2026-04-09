@@ -968,7 +968,7 @@ class TelegramBot:
     # --- daily report job ---
 
     async def _daily_report_job(self, ctx: ContextTypes.DEFAULT_TYPE) -> None:
-        """APScheduler job: generate and send daily CEO report."""
+        """APScheduler job: generate daily CEO report and send as PDF."""
         settings = get_settings()
         chat_id = settings.telegram_owner_chat_id
         if not chat_id:
@@ -981,7 +981,7 @@ class TelegramBot:
             return
 
         try:
-            report = await asyncio.wait_for(
+            report_text = await asyncio.wait_for(
                 ceo.run(
                     "Generate the daily report for the AI Holding. "
                     "Summarise: companies status, all agents activity today, "
@@ -990,14 +990,35 @@ class TelegramBot:
                 ),
                 timeout=self._timeout(),
             )
-            parts = self._split_message(html.escape(report))
-            for i, part in enumerate(parts):
-                prefix = "📋 <b>Daily CEO Report</b>\n\n" if i == 0 else ""
-                await ctx.bot.send_message(
-                    chat_id=int(chat_id),
-                    text=f"{prefix}{part}",
-                    parse_mode=ParseMode.HTML,
+
+            # Send as PDF attachment
+            try:
+                import io
+                from datetime import datetime, timezone
+                from app.services.pdf_report import generate_text_report_pdf
+
+                pdf_bytes = generate_text_report_pdf(
+                    "Daily CEO Report", report_text
                 )
+                date_tag = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                filename = f"CEO_Daily_Report_{date_tag}.pdf"
+
+                await ctx.bot.send_document(
+                    chat_id=int(chat_id),
+                    document=io.BytesIO(pdf_bytes),
+                    filename=filename,
+                    caption="📋 Daily CEO Report — see attached PDF for full details.",
+                )
+            except Exception as pdf_err:
+                logger.warning(f"PDF report failed, falling back to text: {pdf_err}")
+                parts = self._split_message(html.escape(report_text))
+                for i, part in enumerate(parts):
+                    prefix = "📋 <b>Daily CEO Report</b>\n\n" if i == 0 else ""
+                    await ctx.bot.send_message(
+                        chat_id=int(chat_id),
+                        text=f"{prefix}{part}",
+                        parse_mode=ParseMode.HTML,
+                    )
         except (asyncio.TimeoutError, Exception) as e:
             err_msg = "timed out" if isinstance(e, asyncio.TimeoutError) else str(e)
             logger.error(f"Daily report failed: {err_msg}")
@@ -1132,7 +1153,7 @@ class TelegramBot:
     async def _voice_to_ceo(
         self, update: Update, ctx: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        """Handle voice messages — transcribe via Gemini and forward to CEO."""
+        """Handle voice messages — transcribe via Chirp 2 STT and forward to CEO."""
         msg = _authorised_message(update)
         if not msg:
             return
@@ -1148,37 +1169,16 @@ class TelegramBot:
             # Download voice file
             voice_file = await ctx.bot.get_file(voice.file_id)
             voice_bytes = await voice_file.download_as_bytearray()
-
-            # Use Gemini to transcribe (multimodal audio support)
-            import base64
-            from app.services.llm_router import chat as llm_chat
-
-            audio_b64 = base64.b64encode(bytes(voice_bytes)).decode("utf-8")
             mime_type = voice.mime_type or "audio/ogg"
 
-            # Use Gemini flash for fast transcription
-            transcription_response = await llm_chat(
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "text",
-                                "text": "Transcribe this voice message exactly. Return ONLY the transcription text, nothing else.",
-                            },
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime_type};base64,{audio_b64}",
-                                },
-                            },
-                        ],
-                    }
-                ],
-                tier="fast",
+            # Transcribe using dedicated Speech-to-Text service (Chirp 2)
+            from app.services.speech_to_text import transcribe_audio
+
+            transcript = await transcribe_audio(
+                audio_bytes=bytes(voice_bytes),
+                mime_type=mime_type,
             )
 
-            transcript = transcription_response["content"].strip()
             if not transcript:
                 await msg.reply_text("❌ Could not transcribe the voice message.")
                 return

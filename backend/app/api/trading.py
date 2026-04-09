@@ -1,9 +1,11 @@
 """Trading API — portfolio, positions, signals, trade execution, analysis."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-router = APIRouter(prefix="/api/trading", tags=["trading"])
+from app.api.auth import verify_api_key
+
+router = APIRouter(prefix="/api/trading", tags=["trading"], dependencies=[Depends(verify_api_key)])
 
 
 class TradeRequest(BaseModel):
@@ -103,6 +105,21 @@ async def execute_trade(req: TradeRequest):
         take_profit=req.take_profit,
         signal_id=req.signal_id,
     )
+
+
+# ── Close Trade ──────────────────────────────────────────────────
+
+
+@router.post("/close/{trade_id}")
+async def close_trade(trade_id: str):
+    from app.services.trading.trading_service import trading_service
+
+    if not trading_service.is_connected:
+        raise HTTPException(503, "Trading service not connected")
+    try:
+        return await trading_service.close_trade(trade_id)
+    except Exception as e:
+        raise HTTPException(400, str(e))
 
 
 # ── Market Data ──────────────────────────────────────────────────

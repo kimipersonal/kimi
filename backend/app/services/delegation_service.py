@@ -14,6 +14,7 @@ from enum import Enum
 from uuid import uuid4
 
 from app.services.event_bus import event_bus
+from app.db.database import redis_pool
 
 logger = logging.getLogger(__name__)
 
@@ -239,7 +240,6 @@ class DelegationService:
 
     def get_chain(self, delegation_id: str) -> list[dict]:
         """Get the full delegation chain (root → leaf)."""
-        chain = []
         current = self._delegations.get(delegation_id)
 
         # Walk up to root
@@ -286,25 +286,17 @@ class DelegationService:
     async def persist_to_redis(self) -> None:
         """Persist delegation history to Redis."""
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
             data = {did: d.to_dict() for did, d in self._delegations.items()}
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            await r.set(_REDIS_KEY, json.dumps(data), ex=86400 * 7)
-            await r.aclose()
+            await redis_pool.set(_REDIS_KEY, json.dumps(data), ex=86400 * 7)
         except Exception as e:
             logger.debug(f"Could not persist delegation data: {e}")
 
     async def load_from_redis(self) -> None:
         """Load delegation history from Redis (completed only)."""
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if not raw:
                 return
             data = json.loads(raw)

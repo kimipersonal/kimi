@@ -8,9 +8,9 @@ Routes approvals through tiers based on action category and estimated cost:
 Thresholds are configurable per category and persist in Redis.
 """
 
+from app.db.database import redis_pool
 import json
 import logging
-import time
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 
@@ -59,12 +59,8 @@ class TieredApprovalService:
             return
         self._loaded = True
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if raw:
                 data = json.loads(raw)
                 self._thresholds = data.get("thresholds", dict(DEFAULT_THRESHOLDS))
@@ -75,16 +71,12 @@ class TieredApprovalService:
 
     async def _persist(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
             data = {
                 "thresholds": self._thresholds,
                 "decisions": self._decisions[-500:],
             }
-            await r.set(_REDIS_KEY, json.dumps(data), ex=86400 * 30)
-            await r.aclose()
+            await redis_pool.set(_REDIS_KEY, json.dumps(data), ex=86400 * 30)
         except Exception as e:
             logger.debug(f"Could not persist tiered approval config: {e}")
 

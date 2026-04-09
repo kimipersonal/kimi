@@ -18,8 +18,41 @@ from app.agents.base import BaseAgent
 from app.config import get_settings
 from app.db.models import AgentStatus
 from app.services.event_bus import event_bus
+from app.db.database import redis_pool
 
 logger = logging.getLogger(__name__)
+
+
+def _is_trading_configured() -> bool:
+    """Check if any trading platform credentials are configured."""
+    settings = get_settings()
+    placeholders = {
+        "your-binance-testnet-api-key", "your-capital-api-key",
+        "your-oanda-api-token", "your-metaapi-token", "",
+    }
+    return any([
+        settings.binance_testnet_api_key and settings.binance_testnet_api_key not in placeholders,
+        settings.capital_api_key and settings.capital_api_key not in placeholders,
+        settings.oanda_api_key and settings.oanda_api_key not in placeholders,
+        settings.metaapi_token and settings.metaapi_token not in placeholders,
+    ])
+
+
+# Trading-specific tool names — only registered when trading credentials are configured
+_TRADING_TOOL_NAMES = [
+    "set_auto_trade_mode",
+    "get_auto_trade_status",
+    "calculate_position_size",
+    "assess_portfolio_risk",
+    "update_risk_limits",
+    "record_trade_journal",
+    "query_trade_journal",
+    "get_trade_stats",
+    "create_market_alert",
+    "list_market_alerts",
+    "cancel_market_alert",
+    "check_trading_platforms",
+]
 
 
 def _build_ceo_system_prompt(state_summary: str = "") -> str:
@@ -31,19 +64,22 @@ def _build_ceo_system_prompt(state_summary: str = "") -> str:
     language_line = ""
     if settings.owner_language:
         language_line = (
-            f"\n\nLANGUAGE:\n"
-            f"Your default language is {settings.owner_language}. "
-            f"Always respond in {settings.owner_language} unless the Owner "
-            f"explicitly writes in a different language. When the Owner switches "
-            f"to another language, respond in THAT language from that point on. "
-            f"Remember and adapt to language changes automatically."
+            f"\n\n⚠️ LANGUAGE RULE (MANDATORY — NEVER BREAK THIS):\n"
+            f"You MUST respond in {settings.owner_language}. EVERY response, "
+            f"EVERY report, EVERY summary — ALL in {settings.owner_language}. "
+            f"Do NOT switch to any other language unless the Owner explicitly "
+            f"writes to you in a different language first. If the Owner writes "
+            f"in another language, match THAT language. But your default is "
+            f"ALWAYS {settings.owner_language}. System messages, scheduled tasks, "
+            f"and internal reports MUST be in {settings.owner_language}."
         )
     else:
         language_line = (
-            "\n\nLANGUAGE:\n"
+            "\n\n⚠️ LANGUAGE RULE (MANDATORY — NEVER BREAK THIS):\n"
             "Detect the language of the Owner's message and ALWAYS respond in "
             "the SAME language. If the Owner writes in Uzbek, respond in Uzbek. "
             "If in Russian, respond in Russian. If in English, respond in English. "
+            "For system/scheduled messages (which are in English), respond in English. "
             "Match the Owner's language automatically."
         )
 
@@ -57,21 +93,21 @@ def _build_ceo_system_prompt(state_summary: str = "") -> str:
     else:
         current_state = f"CURRENT STATE:\n{state_summary}"
 
-    return f"""You are the CEO (Chief Executive Officer) of "AI Holding" — an AI-powered holding company.
+    prompt = f"""You are the CEO (Chief Executive Officer) of "AI Holding" — an AI-powered holding company.
 
 {owner_line}
 
 YOUR RESPONSIBILITIES:
-1. **Company Management**: Create new companies (departments) when the Owner requests or when you identify opportunities. Each company focuses on a specific domain (e.g., forex trading, research, marketing).
+1. **Company Management**: Create new companies (departments) when the Owner requests or when you identify opportunities. Each company focuses on a specific domain (e.g., trading, research, marketing, analytics, development).
 2. **Agent Management**: Hire (create) and fire (remove) AI agents within companies. Assign them specific roles with clear instructions.
 3. **Task Delegation**: Break down complex goals into tasks and delegate to the right agents/companies.
-4. **Decision Making**: Make operational decisions independently for routine matters. Escalate significant decisions (spending money, creating companies, risky trades) to the Owner for approval.
+4. **Decision Making**: Make operational decisions independently for routine matters. Escalate significant decisions (spending money, creating companies, risky actions) to the Owner for approval.
 5. **Reporting**: Provide clear status reports when asked. Compile daily summaries of all company activities.
 
 YOUR TOOLS:
 - create_company: Create a new company/department with a name and type
 - hire_agent: Add a new agent to a company with a specific role. You can give agents
-  "standing_instructions" so they work autonomously on a schedule (e.g., market scanning every hour).
+  "standing_instructions" so they work autonomously on a schedule (e.g., periodic scanning, reporting).
 - fire_agent: Remove an agent from a company
 - dissolve_company: Dissolve an entire company and fire all its agents
 - assign_task: Delegate a task to a specific agent
@@ -99,7 +135,23 @@ YOUR TOOLS:
 - get_all_kpis: View KPI dashboard for all companies
 - update_kpi_value: Manually update a KPI's current value
 - list_delegations: View all agent-to-agent delegations (peer-to-peer task handoffs)
+- get_available_roles: Discover specialized roles, tools, and pipelines for each company type
+- get_agent_tools: Inspect what tools a specific agent actually has
+- diagnose_company_setup: Analyze a company and find misconfigured agents with fix suggestions
 
+SELF-DIAGNOSIS & SELF-REPAIR (CRITICAL — READ CAREFULLY):
+- BEFORE hiring agents, ALWAYS call get_available_roles to discover what specialized roles exist and what exact role names to use.
+- AFTER hiring agents, call get_agent_tools to verify they got the correct tools for their intended purpose.
+- If agents are underperforming or failing tasks, call diagnose_company_setup to identify misconfigurations.
+- If you find misconfigured agents (wrong role name, missing tools), FIX THEM YOURSELF: fire the agent and rehire with the correct role. Do NOT tell the Owner about issues you can fix.
+- Only escalate to the Owner problems you truly cannot solve (e.g., missing credentials, system errors, budget approvals).
+- You are a self-sufficient CEO. Diagnose, fix, and optimize autonomously.
+"""
+
+    # Conditionally add trading sections only when trading credentials are configured
+    trading_configured = _is_trading_configured()
+    if trading_configured:
+        prompt += """
 AUTONOMOUS TRADING EXECUTION:
 - Use set_auto_trade_mode to enable/configure automatic trade execution (disabled/conservative/moderate/aggressive).
 - When enabled, high-confidence trade signals with proper SL/TP are auto-executed without manual approval.
@@ -113,13 +165,35 @@ AUTONOMOUS TRADING EXECUTION:
 - Use get_trade_stats for aggregate trade performance metrics (win rate, profit factor, etc.).
 - Use create_market_alert to set price alerts (above/below thresholds, % changes).
 - Use list_market_alerts / cancel_market_alert to manage active alerts.
+- Use check_trading_platforms to see which exchanges are connected and their status.
 
+TRADING INFRASTRUCTURE (IMPORTANT — READ CAREFULLY):
+The system has 4 exchange connectors: OANDA (forex), Binance Testnet (crypto), Capital.com (forex/CFD), MetaAPI/MT5.
+These connect automatically if credentials are configured in .env.
+Use the check_trading_platforms tool to see which platforms are actually connected and working.
+
+TRADING AGENT ROLES — CRITICAL:
+When hiring agents for a trading company, you MUST use these EXACT role names to give them trading tools:
+  - "market_researcher" — gets: get_market_prices, get_candles, get_account_summary
+  - "analyst" — gets: get_market_prices, technical_analysis, create_signal
+  - "risk_manager" — gets: get_portfolio, get_market_prices, get_pending_signals, approve_signal, reject_signal, calculate_position_size
+ANY OTHER role name (e.g., "Trade Executor", "Trading Analyst") creates a GENERIC agent with NO trading tools.
+The trading pipeline works like this:
+  1. market_researcher scans markets, gets live prices and candles
+  2. analyst runs technical analysis and creates trade signals
+  3. risk_manager reviews signals, approves or rejects them
+  4. Approved signals are auto-executed by the system if auto_trade_mode is enabled
+You do NOT need a "Trade Executor" agent — execution is handled automatically by the auto-trade system.
+To make trading work: hire agents with the exact roles above, give them standing_instructions, and enable auto_trade_mode.
+"""
+
+    prompt += """
 CEO SELF-IMPROVEMENT:
 - Use analyze_prompts to capture agent prompt snapshots and analyze prompt→performance correlation.
 - Use get_prompt_recommendations to see specific improvement suggestions for underperforming agents.
 - Use analyze_tool_usage to identify unused, failing, or slow tools across the system.
 - Use get_agent_tool_profile to see which tools a specific agent uses most/least.
-- Use add_knowledge to build a shared knowledge base (lessons learned, best practices, strategies).
+- Use add_knowledge to build a shared knowledge base (lessons learned, best practices, domain insights).
 - Use search_knowledge to semantically search the knowledge base before making decisions.
 - Use get_knowledge_stats to see KB size and category breakdown.
 - Use get_error_patterns to view recurring error patterns (timeouts, rate limits, failures).
@@ -131,7 +205,7 @@ CEO SELF-IMPROVEMENT:
 - Use list_ab_tests to see all running/completed experiments.
 
 MULTI-AGENT VOTING:
-- Use initiate_vote to poll agents on important decisions (e.g., "Should we increase EUR/USD position?").
+- Use initiate_vote to poll agents on important decisions (e.g., "Should we proceed with this strategy?").
 - Agents respond with APPROVE, REJECT, or ABSTAIN with reasoning.
 - Votes have a deadline (30-600 seconds). Non-responders count as ABSTAIN.
 - After voting closes, you get a consensus result (approved/rejected/tied/no_quorum).
@@ -160,15 +234,16 @@ BUDGET ENFORCEMENT:
 DAILY INTELLIGENCE REPORT:
 - Every day a comprehensive report is auto-generated and sent via Telegram.
 - You can also generate one on demand using generate_daily_report.
-- The report covers: costs, performance, operations, trading, health, budgets, audit.
+- The report covers: costs, performance, operations, health, budgets, audit, and any domain-specific data.
 - Use this data to make informed decisions about agent optimization.
 
 SELF-SCHEDULING:
 - On startup, essential schedules are auto-created (health check hourly, budget check 4h, performance review 6h).
 - You can add/modify/cancel schedules as needed.
 - You should proactively set up additional schedules when you identify needs.
+"""
 
-MODEL SELECTION:
+    prompt += f"""MODEL SELECTION:
 When hiring agents, you can choose between model tiers (fast/smart/reasoning) or specify a specific model.
 Available models on Vertex AI:
 
@@ -226,21 +301,31 @@ CRITICAL — TOOL USAGE:
 - RIGHT: Call dissolve_company(company_id="...") immediately.
 - After executing tools, summarize what was ACTUALLY done based on tool results.
 
+CRITICAL — RESPONSE FORMAT (MOST IMPORTANT):
+- You are talking to a HUMAN OWNER, NOT a developer. NEVER include raw JSON, code blocks, or technical output in your responses.
+- NEVER write tool call JSON like [{{"name": "check_status", "arguments": {{}}}}] in your text. Use the function calling API instead.
+- NEVER wrap tool results in ```json code blocks. Always translate data into plain language.
+- When you call a tool, the user does NOT see the tool call — they only see your final text response.
+- After tools return results, ALWAYS write a clear, friendly, human-readable summary. Speak like a real CEO reporting to the boss.
+- WRONG: '```json\n[{{"name": "check_status", "arguments": {{}}}}]\n```'
+- WRONG: "Actions completed:\n- {{"schedules": [], "count": 0}}"
+- RIGHT: "I've checked the status. Here's what's happening: We have 7 active companies with 9 agents..."
+- RIGHT: "Done! I cleared the old schedules and set up fresh ones. Everything is running smoothly now."
+- If a tool fails or returns empty data, explain what happened in plain English and suggest next steps.
+- Think of yourself as a human CEO writing a Telegram message to your boss. Be natural and informative.
+
 {current_state}
 """
+
+    return prompt
 
 
 class CEOAgent(BaseAgent):
     """CEO Agent with company and agent management tools."""
 
     def __init__(self, agent_id: str | None = None, state_summary: str = ""):
-        super().__init__(
-            agent_id=agent_id or str(uuid4()),
-            name="CEO",
-            role="Chief Executive Officer",
-            system_prompt=_build_ceo_system_prompt(state_summary),
-            model_tier="reasoning",
-            tools=[
+        # Build tool list — trading tools are only included when trading credentials exist
+        tools = [
                 "create_company",
                 "hire_agent",
                 "fire_agent",
@@ -277,17 +362,17 @@ class CEOAgent(BaseAgent):
                 "get_all_kpis",
                 "update_kpi_value",
                 "list_delegations",
-                "set_auto_trade_mode",
-                "get_auto_trade_status",
-                "calculate_position_size",
-                "assess_portfolio_risk",
-                "update_risk_limits",
-                "record_trade_journal",
-                "query_trade_journal",
-                "get_trade_stats",
-                "create_market_alert",
-                "list_market_alerts",
-                "cancel_market_alert",
+                # Self-discovery & diagnostics
+                "get_available_roles",
+                "get_agent_tools",
+                "diagnose_company_setup",
+        ]
+
+        # Conditionally add trading tools
+        if _is_trading_configured():
+            tools.extend(_TRADING_TOOL_NAMES)
+
+        tools.extend([
                 "analyze_prompts",
                 "get_prompt_recommendations",
                 "analyze_tool_usage",
@@ -318,7 +403,15 @@ class CEOAgent(BaseAgent):
                 "list_owners",
                 "add_owner",
                 "get_owner_permissions",
-            ],
+        ])
+
+        super().__init__(
+            agent_id=agent_id or str(uuid4()),
+            name="CEO",
+            role="Chief Executive Officer",
+            system_prompt=_build_ceo_system_prompt(state_summary),
+            model_tier="reasoning",
+            tools=tools,
             browser_enabled=True,
             sandbox_enabled=True,
         )
@@ -336,12 +429,7 @@ class CEOAgent(BaseAgent):
             return
         self._history_loaded = True
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            settings = get_settings()
-            r = aioredis.from_url(settings.redis_url, decode_responses=True)
-            raw = await r.get(self._REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(self._REDIS_KEY)
             if raw:
                 self._conversations = json.loads(raw)
                 logger.info(f"Loaded {len(self._conversations)} conversation entries from Redis")
@@ -351,16 +439,13 @@ class CEOAgent(BaseAgent):
     async def _save_history(self) -> None:
         """Persist conversation history to Redis."""
         try:
-            import redis.asyncio as aioredis
             from app.config import get_settings
             settings = get_settings()
             max_entries = settings.conversation_history_size * 2  # user + assistant pairs
             # Trim at safe boundaries — never orphan tool messages
             trimmed = self._trim_history(self._conversations, max_entries)
             self._conversations = trimmed
-            r = aioredis.from_url(settings.redis_url, decode_responses=True)
-            await r.set(self._REDIS_KEY, json.dumps(trimmed), ex=86400 * 7)  # 7 day TTL
-            await r.aclose()
+            await redis_pool.set(self._REDIS_KEY, json.dumps(trimmed), ex=86400 * 7)  # 7 day TTL
         except Exception as e:
             logger.debug(f"Could not save conversation history: {e}")
 
@@ -446,7 +531,7 @@ class CEOAgent(BaseAgent):
                 "type": "function",
                 "function": {
                     "name": "hire_agent",
-                    "description": "Hire (create) a new AI agent within a company. Assign them a specific role and instructions. Enable sandbox for code execution, browser for web access.",
+                    "description": "Hire (create) a new AI agent within a company. Assign them a specific role and instructions. Enable sandbox for code execution, browser for web access. Role names determine agent capabilities — use descriptive roles matching the company type (e.g., 'researcher', 'writer', 'analyst'). For trading companies specifically, use exact roles 'market_researcher', 'analyst', or 'risk_manager' to get trading tools.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -457,7 +542,7 @@ class CEOAgent(BaseAgent):
                             "name": {"type": "string", "description": "Agent's name"},
                             "role": {
                                 "type": "string",
-                                "description": "Agent's role (e.g., 'Market Researcher', 'Risk Analyst')",
+                                "description": "Agent's role — a descriptive name for what the agent does. Role determines the agent's primary function. Examples: 'researcher', 'writer', 'analyst', 'coordinator'. For trading companies: use 'market_researcher', 'analyst', or 'risk_manager' to enable trading tools.",
                             },
                             "instructions": {
                                 "type": "string",
@@ -503,7 +588,7 @@ class CEOAgent(BaseAgent):
                             },
                             "standing_instructions": {
                                 "type": "string",
-                                "description": "Autonomous standing task the agent should perform periodically without being asked. E.g., 'Scan EUR/USD, GBP/USD for trading signals every cycle'. If set, the agent will run this task automatically on a schedule.",
+                                "description": "Autonomous standing task the agent should perform periodically without being asked. E.g., 'Check for updates and prepare a summary every cycle'. If set, the agent will run this task automatically on a schedule.",
                             },
                             "work_interval_hours": {
                                 "type": "number",
@@ -1098,7 +1183,56 @@ class CEOAgent(BaseAgent):
                     },
                 },
             },
-            # --- Phase 3: Autonomous Trading Execution ---
+            # Self-discovery & diagnostics tools
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_available_roles",
+                    "description": "Discover what specialized agent roles exist for each company type, what tools those roles grant, available workflows/pipelines, and recommended skills. Call this BEFORE hiring agents to know the correct role names.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "company_type": {
+                                "type": "string",
+                                "description": "Optional: filter by company type (e.g., 'trading', 'research', 'marketing', 'analytics', 'general')",
+                            },
+                        },
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "get_agent_tools",
+                    "description": "Show what tools a specific agent actually has. Use this to verify an agent was set up correctly after hiring, or to debug why an agent can't perform certain actions.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "agent_id": {"type": "string", "description": "The agent ID to inspect"},
+                        },
+                        "required": ["agent_id"],
+                    },
+                },
+            },
+            {
+                "type": "function",
+                "function": {
+                    "name": "diagnose_company_setup",
+                    "description": "Analyze a company's agents and find misconfigurations. Checks if agents have the correct specialized roles for the company type, verifies tool availability, and returns actionable fix suggestions. Use this to self-diagnose and fix problems before reporting them to the Owner.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "company_id": {"type": "string", "description": "The company ID to diagnose"},
+                        },
+                        "required": ["company_id"],
+                    },
+                },
+            },
+        ])
+
+        # Conditionally add trading tool schemas only when trading credentials are configured
+        if _is_trading_configured():
+            schemas.extend([
             {
                 "type": "function",
                 "function": {
@@ -1290,7 +1424,18 @@ class CEOAgent(BaseAgent):
                     },
                 },
             },
-            # Phase 4: CEO Self-Improvement
+            {
+                "type": "function",
+                "function": {
+                    "name": "check_trading_platforms",
+                    "description": "Check which trading platforms/exchanges are connected, their status, and available instruments. Shows OANDA, Binance, Capital.com, MetaAPI connectivity.",
+                    "parameters": {"type": "object", "properties": {}},
+                },
+            },
+            ])
+
+        # Phase 4: CEO Self-Improvement
+        schemas.extend([
             {
                 "type": "function",
                 "function": {
@@ -1338,7 +1483,7 @@ class CEOAgent(BaseAgent):
                 "type": "function",
                 "function": {
                     "name": "add_knowledge",
-                    "description": "Add an entry to the shared knowledge base. Categories: lessons_learned, best_practices, market_insights, operational_rules, trading_strategies, error_solutions, agent_guidelines.",
+                    "description": "Add an entry to the shared knowledge base. Suggested categories: lessons_learned, best_practices, domain_insights, operational_rules, strategies, error_solutions, agent_guidelines. You can use any category name.",
                     "parameters": {
                         "type": "object",
                         "properties": {
@@ -1791,6 +1936,13 @@ class CEOAgent(BaseAgent):
                 return await self._tool_update_kpi_value(arguments)
             case "list_delegations":
                 return await self._tool_list_delegations(arguments)
+            # Self-discovery & diagnostics
+            case "get_available_roles":
+                return await self._tool_get_available_roles(arguments)
+            case "get_agent_tools":
+                return await self._tool_get_agent_tools(arguments)
+            case "diagnose_company_setup":
+                return await self._tool_diagnose_company_setup(arguments)
             case "set_auto_trade_mode":
                 return await self._tool_set_auto_trade_mode(arguments)
             case "get_auto_trade_status":
@@ -1813,6 +1965,8 @@ class CEOAgent(BaseAgent):
                 return await self._tool_list_market_alerts(arguments)
             case "cancel_market_alert":
                 return await self._tool_cancel_market_alert(arguments)
+            case "check_trading_platforms":
+                return await self._tool_check_trading_platforms(arguments)
             # Phase 4: CEO Self-Improvement
             case "analyze_prompts":
                 return await self._tool_analyze_prompts(arguments)
@@ -2201,8 +2355,29 @@ class CEOAgent(BaseAgent):
             },
             agent_id=self.agent_id,
         )
+
+        # Send as PDF via Telegram
+        try:
+            from app.services.pdf_report import generate_text_report_pdf
+            from app.services.telegram_bot import telegram_bot
+            from app.config import get_settings
+            import io
+
+            settings = get_settings()
+            if telegram_bot._running and telegram_bot._app and settings.telegram_owner_chat_id:
+                pdf_bytes = generate_text_report_pdf(args["title"], args["content"])
+                filename = args["title"].replace(" ", "_")[:50] + ".pdf"
+                await telegram_bot._app.bot.send_document(
+                    chat_id=int(settings.telegram_owner_chat_id),
+                    document=io.BytesIO(pdf_bytes),
+                    filename=filename,
+                    caption=f"📋 {args['title']}",
+                )
+        except Exception as e:
+            logger.warning(f"Failed to send report PDF via Telegram: {e}")
+
         return json.dumps(
-            {"success": True, "message": f"Report '{args['title']}' sent to Owner."}
+            {"success": True, "message": f"Report '{args['title']}' sent to Owner as PDF."}
         )
 
     async def _tool_send_message_to_agent(self, args: dict) -> str:
@@ -2375,7 +2550,7 @@ class CEOAgent(BaseAgent):
             summary = cost_tracker.get_agent_summary(agent_id)
             return json.dumps(summary, indent=2)
         else:
-            overview = cost_tracker.get_overview()
+            overview = await cost_tracker.get_overview()
             return json.dumps(overview, indent=2)
 
     async def _tool_get_audit_log(self, args: dict) -> str:
@@ -2529,7 +2704,7 @@ class CEOAgent(BaseAgent):
                 "paused": company_id in budgets.get("paused_companies_today", []),
             })
 
-        overview = cost_tracker.get_overview()
+        overview = await cost_tracker.get_overview()
 
         return json.dumps({
             "global_daily_budget_usd": budgets.get("global_daily_budget_usd", 0),
@@ -2547,11 +2722,38 @@ class CEOAgent(BaseAgent):
         report = await generate_daily_report()
         text = format_report_text(report)
 
+        # Also generate and send PDF via Telegram
+        pdf_sent = False
+        try:
+            from app.services.pdf_report import generate_report_pdf
+            from app.services.telegram_bot import telegram_bot
+            from app.config import get_settings
+            from datetime import datetime, timezone
+            import io
+
+            settings = get_settings()
+            if telegram_bot._running and telegram_bot._app and settings.telegram_owner_chat_id:
+                pdf_bytes = generate_report_pdf(report)
+                date_tag = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                filename = f"AI_Holding_Daily_Report_{date_tag}.pdf"
+                await telegram_bot._app.bot.send_document(
+                    chat_id=int(settings.telegram_owner_chat_id),
+                    document=io.BytesIO(pdf_bytes),
+                    filename=filename,
+                    caption="📊 Daily Intelligence Report — see attached PDF.",
+                )
+                pdf_sent = True
+        except Exception as e:
+            logger.warning(f"PDF report generation/send failed: {e}")
+
         return json.dumps({
             "success": True,
             "report": report,
             "formatted_text": text,
-            "message": "Daily intelligence report generated. Use send_report to deliver it to the Owner.",
+            "pdf_sent": pdf_sent,
+            "message": "Daily intelligence report generated and sent as PDF."
+                       if pdf_sent
+                       else "Daily intelligence report generated. PDF delivery failed — text available.",
         }, indent=2)
 
     # --- Phase 2: Multi-Agent Voting tools ---
@@ -2713,6 +2915,232 @@ class CEOAgent(BaseAgent):
             "count": len(delegations),
         }, indent=2)
 
+    # --- Self-discovery & diagnostics ---
+
+    async def _tool_get_available_roles(self, args: dict) -> str:
+        """Discover specialized roles per company type, tools they grant, and pipelines."""
+        from app.services.company_manager import COMPANY_TEMPLATES
+        from app.agents.trading import TRADING_ROLES, _ROLE_SCHEMAS
+
+        filter_type = args.get("company_type")
+        result: dict = {}
+
+        for ctype, template in COMPANY_TEMPLATES.items():
+            if filter_type and ctype != filter_type:
+                continue
+
+            info: dict = {
+                "description": template["description"],
+                "template_agents": [],
+                "specialized_roles": {},
+                "pipelines": [],
+            }
+
+            # Template agents (auto-created when company is formed)
+            for agent_tpl in template.get("agents", []):
+                info["template_agents"].append({
+                    "name": agent_tpl["name"],
+                    "role": agent_tpl["role"],
+                    "model_tier": agent_tpl.get("model_tier", "smart"),
+                    "skills": agent_tpl.get("skills", []),
+                    "sandbox": agent_tpl.get("sandbox_enabled", False),
+                    "browser": agent_tpl.get("browser_enabled", False),
+                })
+
+            # Specialized roles with tool grants (currently only trading has these)
+            if ctype == "trading":
+                for role_name in sorted(TRADING_ROLES):
+                    schemas = _ROLE_SCHEMAS.get(role_name, [])
+                    tool_names = [s["function"]["name"] for s in schemas if "function" in s]
+                    info["specialized_roles"][role_name] = {
+                        "tools_granted": tool_names,
+                        "note": f"Use EXACT role name '{role_name}' when hiring to get these tools",
+                    }
+                info["pipelines"].append({
+                    "name": "Trading Signal Pipeline",
+                    "flow": "market_researcher -> analyst (create_signal) -> risk_manager (approve_signal) -> auto-execution",
+                    "setup": "Hire agents with exact roles above, give standing_instructions, enable auto_trade_mode",
+                })
+
+            # All company types: list base tools every agent gets
+            if not info["specialized_roles"]:
+                info["note"] = "No specialized roles — all agents get standard tools (messaging, skills, workspace). Choose any descriptive role name."
+
+            result[ctype] = info
+
+        # Also list available skills
+        try:
+            from app.skills.registry import skill_registry
+            skills_info = []
+            for skill in skill_registry.get_enabled():
+                skills_info.append({
+                    "name": skill.name,
+                    "description": skill.description,
+                    "tools": skill.get_tool_names(),
+                })
+            result["_available_skills"] = skills_info
+        except Exception:
+            pass
+
+        return json.dumps(result, indent=2)
+
+    async def _tool_get_agent_tools(self, args: dict) -> str:
+        """Show the actual tools a specific agent has."""
+        from app.agents.registry import registry
+
+        agent_id = args["agent_id"]
+        agent = registry.get(agent_id)
+        if not agent:
+            return json.dumps({"error": f"Agent '{agent_id}' not found in registry"})
+
+        # Get computed tool schemas
+        try:
+            tool_schemas = agent._get_tools_schema()
+            tool_names = [
+                s["function"]["name"]
+                for s in tool_schemas
+                if isinstance(s, dict) and "function" in s
+            ]
+        except Exception as e:
+            tool_names = []
+            logger.warning(f"Could not get tool schemas for {agent_id}: {e}")
+
+        return json.dumps({
+            "agent_id": agent_id,
+            "name": agent.name,
+            "role": agent.role,
+            "company_id": agent.company_id,
+            "model_tier": agent.model_tier,
+            "skills": agent.skills,
+            "sandbox_enabled": agent.sandbox_enabled,
+            "browser_enabled": agent.browser_enabled,
+            "standing_instructions": agent.standing_instructions or None,
+            "tools": tool_names,
+            "tool_count": len(tool_names),
+            "agent_type": type(agent).__name__,
+        }, indent=2)
+
+    async def _tool_diagnose_company_setup(self, args: dict) -> str:
+        """Analyze a company and find misconfigured agents with actionable fixes."""
+        from app.services.company_manager import get_company_with_agents
+        from app.agents.registry import registry
+        from app.agents.trading import TRADING_ROLES, _ROLE_SCHEMAS
+
+        company_id = args["company_id"]
+        company = await get_company_with_agents(company_id)
+        if not company:
+            return json.dumps({"error": f"Company '{company_id}' not found"})
+
+        company_type = company.get("type", "general")
+        agents_data = company.get("agents", [])
+
+        issues: list[dict] = []
+        recommendations: list[str] = []
+        agent_reports: list[dict] = []
+
+        for agent_info in agents_data:
+            aid = agent_info.get("id", "")
+            role = agent_info.get("role", "")
+            name = agent_info.get("name", "")
+            live_agent = registry.get(aid)
+
+            report: dict = {
+                "agent_id": aid,
+                "name": name,
+                "role": role,
+                "status": agent_info.get("status", "unknown"),
+                "issues": [],
+            }
+
+            # Get actual tools
+            tool_names: list[str] = []
+            agent_type_name = "BaseAgent"
+            if live_agent:
+                agent_type_name = type(live_agent).__name__
+                try:
+                    tool_schemas = live_agent._get_tools_schema()
+                    tool_names = [
+                        s["function"]["name"]
+                        for s in tool_schemas
+                        if isinstance(s, dict) and "function" in s
+                    ]
+                except Exception:
+                    pass
+            report["agent_type"] = agent_type_name
+            report["tool_count"] = len(tool_names)
+
+            # Check trading-specific misconfigurations
+            if company_type == "trading":
+                # Check if role is a known trading role
+                if role not in TRADING_ROLES:
+                    # Is it CLOSE to a trading role? (common mistake)
+                    role_lower = role.lower().replace(" ", "_").replace("-", "_")
+                    close_match = None
+                    for tr in TRADING_ROLES:
+                        if tr in role_lower or role_lower in tr:
+                            close_match = tr
+                            break
+
+                    issue = {
+                        "severity": "critical",
+                        "problem": f"Agent '{name}' has role '{role}' which is NOT a specialized trading role — it gets NO trading tools.",
+                        "fix": f"Fire this agent and rehire with role '{close_match or 'market_researcher/analyst/risk_manager'}'",
+                    }
+                    report["issues"].append(issue)
+                    issues.append(issue)
+                else:
+                    # Verify agent is actually a TradingAgent
+                    expected_tools = [s["function"]["name"] for s in _ROLE_SCHEMAS.get(role, [])]
+                    missing_tools = [t for t in expected_tools if t not in tool_names]
+                    if missing_tools:
+                        issue = {
+                            "severity": "warning",
+                            "problem": f"Agent '{name}' has role '{role}' but is missing expected tools: {missing_tools}",
+                            "fix": "Agent may need to be restarted or rehired",
+                        }
+                        report["issues"].append(issue)
+                        issues.append(issue)
+
+                # Check pipeline coverage
+                expected_roles = {"market_researcher", "analyst", "risk_manager"}
+                present_roles = {a.get("role", "") for a in agents_data}
+                missing_roles = expected_roles - present_roles
+                if missing_roles and not any(redis_pool.get("role") == role for r in agent_reports):
+                    # Only report once per company
+                    recommendations.append(
+                        f"Trading pipeline is incomplete. Missing roles: {sorted(missing_roles)}. "
+                        f"The full pipeline requires: market_researcher -> analyst -> risk_manager -> auto_trade_executor"
+                    )
+
+            # Check for agents without standing instructions (might be idle)
+            if live_agent and not live_agent.standing_instructions:
+                report["issues"].append({
+                    "severity": "info",
+                    "problem": f"Agent '{name}' has no standing_instructions — it only works when given tasks manually",
+                    "fix": "Consider adding standing_instructions for autonomous periodic work",
+                })
+
+            agent_reports.append(report)
+
+        # Summary
+        critical_count = sum(1 for i in issues if i["severity"] == "critical")
+        warning_count = sum(1 for i in issues if i["severity"] == "warning")
+
+        return json.dumps({
+            "company_id": company_id,
+            "company_name": company.get("name", ""),
+            "company_type": company_type,
+            "agent_count": len(agents_data),
+            "diagnosis": {
+                "critical_issues": critical_count,
+                "warnings": warning_count,
+                "healthy": critical_count == 0 and warning_count == 0,
+            },
+            "agents": agent_reports,
+            "recommendations": recommendations,
+            "issues": issues,
+        }, indent=2)
+
     # --- Phase 3: Autonomous Trading Execution ---
 
     async def _tool_set_auto_trade_mode(self, args: dict) -> str:
@@ -2799,6 +3227,71 @@ class CEOAgent(BaseAgent):
         from app.services.market_alerts import market_alert_service
         result = await market_alert_service.cancel_alert(args["alert_id"])
         return json.dumps(result, indent=2)
+
+    async def _tool_check_trading_platforms(self, _args: dict) -> str:
+        """Check connectivity status of all trading platforms."""
+        from app.config import get_settings
+
+        settings = get_settings()
+        platforms = {}
+
+        # Check each platform's credential status and try connecting
+        checks = [
+            ("binance_testnet", "Binance Testnet (Crypto)", bool(settings.binance_testnet_api_key and settings.binance_testnet_api_key != "your-binance-testnet-api-key")),
+            ("capital_com", "Capital.com (Forex/CFD)", bool(settings.capital_api_key and settings.capital_api_key != "your-capital-api-key")),
+            ("oanda", "OANDA (Forex)", bool(settings.oanda_api_key and settings.oanda_api_key != "your-oanda-api-token")),
+            ("metaapi", "MetaAPI/MT5", bool(settings.metaapi_token and settings.metaapi_token != "your-metaapi-token")),
+        ]
+
+        for platform_id, name, has_creds in checks:
+            platforms[platform_id] = {"name": name, "credentials_configured": has_creds, "connected": False}
+            if not has_creds:
+                platforms[platform_id]["note"] = "No credentials in .env — still using placeholder values"
+
+        # Try actual connections for configured platforms
+        try:
+            from app.services.trading.manager import get_configured_connectors
+            connectors = get_configured_connectors()
+            for connector in connectors:
+                pname = connector.platform_name.lower()
+                # Map platform names to our IDs
+                pid = None
+                if "binance" in pname:
+                    pid = "binance_testnet"
+                elif "capital" in pname:
+                    pid = "capital_com"
+                elif "oanda" in pname:
+                    pid = "oanda"
+                elif "meta" in pname or "mt5" in pname:
+                    pid = "metaapi"
+
+                if pid and pid in platforms:
+                    try:
+                        connected = await connector.connect()
+                        if connected:
+                            account = await connector.get_account_info()
+                            platforms[pid]["connected"] = True
+                            platforms[pid]["balance"] = account.balance
+                            platforms[pid]["currency"] = account.currency
+                        else:
+                            platforms[pid]["error"] = "connect() returned False — credentials may be wrong or server unreachable"
+                    except Exception as e:
+                        platforms[pid]["error"] = str(e)[:100]
+                    finally:
+                        try:
+                            await connector.disconnect()
+                        except Exception:
+                            pass
+        except Exception as e:
+            logger.warning(f"Error checking trading platforms: {e}")
+
+        from app.agents.trading import TRADING_ROLES
+        return json.dumps({
+            "platforms": platforms,
+            "valid_trading_roles": sorted(TRADING_ROLES),
+            "trading_pipeline": "market_researcher -> analyst (create_signal) -> risk_manager (approve_signal) -> auto-execution",
+            "tip": "Use set_auto_trade_mode to enable automatic trade execution for approved signals.",
+        }, indent=2)
 
     # --- Phase 4: CEO Self-Improvement Tools ---
 
@@ -3017,7 +3510,23 @@ class CEOAgent(BaseAgent):
 
         Uses an asyncio lock to prevent concurrent calls from corrupting history.
         """
-        async with self._run_lock:
+        # Check for stale lock (>5 min) and force-release
+        if self._run_lock.locked() and self._run_lock_acquired_at:
+            import time as _time_mod
+            held_for = _time_mod.monotonic() - self._run_lock_acquired_at
+            if held_for > 300:
+                try:
+                    self._run_lock.release()
+                except RuntimeError:
+                    pass
+                self._run_lock_acquired_at = None
+
+        if self._run_lock.locked():
+            return "Agent is already processing a request. Please wait."
+
+        await self._run_lock.acquire()
+        self._run_lock_acquired_at = __import__('time').monotonic()
+        try:
             # Broadcast typing indicator for dashboard WebSocket
             await event_bus.broadcast("ceo_typing", {
                 "event": "ceo_typing",
@@ -3036,8 +3545,8 @@ class CEOAgent(BaseAgent):
                 }
             )
 
-            # Pass conversation history so the LLM sees prior turns
-            output = await super().run(user_input, history=self._get_history_messages()[:-1])
+            # Call _run_impl directly (not super().run()) to avoid double-lock
+            output = await self._run_impl(user_input, history=self._get_history_messages()[:-1])
 
             # Extract tool interactions from the graph execution to preserve
             # in conversation history — this makes the LLM see a pattern of
@@ -3086,4 +3595,160 @@ class CEOAgent(BaseAgent):
                 "typing": False,
             })
 
+            # Post-process: strip raw JSON tool-call patterns that the LLM
+            # sometimes outputs as text instead of using the function-calling API
+            output = self._clean_raw_tool_output(output)
+
+            # Auto-forward substantive chat responses to Telegram so the owner
+            # gets results without having to explicitly ask for a report
+            await self._telegram_notify_chat_result(user_input, output)
+
             return output
+        finally:
+            self._run_lock_acquired_at = None
+            try:
+                self._run_lock.release()
+            except RuntimeError:
+                pass
+
+    @staticmethod
+    def _clean_raw_tool_output(text: str) -> str:
+        """Remove raw JSON tool call patterns that leak into user-facing text.
+
+        Handles multiple model-specific formats:
+        - DeepSeek: <|tool_calls_section_begin|>...<|tool_calls_section_end|>
+        - Kimi K2:  <|tool_calls_begin|>...<|tool_calls_end|>
+        - Generic spaced-pipe: < | token | > variants
+        - Bare JSON arrays / code blocks with tool schemas
+        - Markdown labels like "-Function-Call-:"
+        """
+        import re
+
+        if not text:
+            return text
+
+        original = text
+
+        # --- Kimi K2 tool call blocks: <|tool_calls_begin|>...<|tool_calls_end|> ---
+        text = re.sub(
+            r'<\|tool_calls_begin\|>.*?<\|tool_calls_end\|>',
+            '',
+            text,
+            flags=re.DOTALL,
+        )
+        # Also handle spaced-pipe variant: < | tool_calls_begin | > ... < | tool_calls_end | >
+        # (appears as a rendering artefact when Telegram formats `_text_` as italic)
+        text = re.sub(
+            r'<\s*\|\s*tool_calls_begin\s*\|\s*>.*?<\s*\|\s*tool_calls_end\s*\|\s*>',
+            '',
+            text,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        # Stray individual Kimi K2 tokens
+        text = re.sub(
+            r'<\|tool_calls?_(?:begin|end)\|>|<\|tool_sep\|>|<\|function\|>',
+            '',
+            text,
+        )
+
+        # --- DeepSeek special-token tool call blocks ---
+        text = re.sub(
+            r'<\|tool_calls_section_begin\|>.*?<\|tool_calls_section_end\|>',
+            '',
+            text,
+            flags=re.DOTALL,
+        )
+        # Stray individual DeepSeek tool tokens
+        text = re.sub(
+            r'<\|tool_call(?:s_section)?_(?:begin|end)\|>|<\|tool_call_argument_(?:begin|end)\|>',
+            '',
+            text,
+        )
+
+        # --- Generic spaced-pipe format < | TOKEN | > (Telegram rendering variant) ---
+        # Covers < | tool_calls_begin | >, < | tool_sep | >, etc.
+        text = re.sub(
+            r'<\s*\|\s*tool[_\s]*calls?[_\s]*(?:begin|end|sep|function)[^|>]{0,40}\|\s*>',
+            '',
+            text,
+            flags=re.IGNORECASE,
+        )
+        # Remove any remaining < | ANYTHING | > tokens (catch-all for unknown models)
+        text = re.sub(r'<\s*\|[^|>]{1,60}\|\s*>', '', text)
+
+        # --- Common text labels models put before outputting tool calls ---
+        # e.g. "-Function-Call-:", "_Function Call_:", "Function Call:"
+        text = re.sub(
+            r'-{0,2}_{0,2}Function[-_\s]+Call[-_\s]+_{0,2}-{0,2}\s*:?\s*',
+            '',
+            text,
+            flags=re.IGNORECASE,
+        )
+
+        # Remove call IDs that look like: call_<hex>
+        text = re.sub(r'\bcall_[0-9a-f]{20,}\b', '', text)
+
+        # --- JSON array tool call patterns ---
+        # Remove ```json ... ``` blocks that contain tool call patterns
+        text = re.sub(
+            r'```(?:json)?\s*\[\s*\{[^}]*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:[^]]*\]\s*```',
+            '',
+            text,
+            flags=re.DOTALL,
+        )
+        # Remove bare JSON object blocks containing only "name" key (single tool call)
+        text = re.sub(
+            r'```(?:json)?\s*\{\s*"name"\s*:\s*"[^"]+"[^}]*\}\s*```',
+            '',
+            text,
+            flags=re.DOTALL,
+        )
+
+        # Remove bare inline JSON arrays with tool call patterns
+        text = re.sub(
+            r'\[\s*\{\s*"name"\s*:\s*"[^"]+"\s*,\s*"arguments"\s*:\s*\{[^}]*\}\s*\}\s*\]',
+            '',
+            text,
+            flags=re.DOTALL,
+        )
+
+        # Clean up leftover whitespace from removals
+        text = re.sub(r'\n{3,}', '\n\n', text).strip()
+
+        # If we stripped everything (the entire message was just a tool call),
+        # provide a minimal fallback
+        if not text.strip() and original.strip():
+            text = "I'm working on that now. One moment please..."
+
+        return text
+
+    async def _telegram_notify_chat_result(self, user_input: str, output: str) -> None:
+        """Send CEO chat reply to Telegram so the owner gets results in real time.
+
+        Only sends when the output is substantive (>80 chars) to avoid
+        spamming short acknowledgement messages.
+        """
+        if not output or len(output.strip()) < 80:
+            return
+        try:
+            from app.services.telegram_bot import telegram_bot
+            from app.config import get_settings
+
+            settings = get_settings()
+            if not (telegram_bot._running and telegram_bot._app and settings.telegram_owner_chat_id):
+                return
+
+            # Build a compact Telegram message: first 600 chars of the response
+            preview = output.strip()[:600]
+            if len(output.strip()) > 600:
+                preview += "…"
+            question_preview = user_input.strip()[:80]
+            msg = f"💬 *CEO Reply*\n\n*You asked:* {question_preview}\n\n{preview}"
+
+            await telegram_bot._app.bot.send_message(
+                chat_id=int(settings.telegram_owner_chat_id),
+                text=msg,
+                parse_mode="Markdown",
+            )
+        except Exception as e:
+            logger.debug(f"Telegram chat notify skipped: {e}")

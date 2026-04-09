@@ -8,6 +8,7 @@ Periodically checks:
   - LLM API availability
 """
 
+from app.db.database import redis_pool
 import asyncio
 import logging
 import time
@@ -80,13 +81,7 @@ class HealthMonitor:
     async def _check_redis(self):
         """Check Redis connectivity."""
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-
-            settings = get_settings()
-            r = aioredis.from_url(settings.redis_url)
-            await r.ping()
-            await r.aclose()
+            await redis_pool.ping()
             self._checks["redis"] = {
                 "status": "healthy",
                 "checked_at": datetime.now(timezone.utc).isoformat(),

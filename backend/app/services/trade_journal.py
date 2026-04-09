@@ -6,7 +6,6 @@ outcome) in the AgentMemory vector table. Enables the CEO to query
 institutional trading knowledge.
 """
 
-import json
 import logging
 from datetime import datetime, timezone
 from uuid import uuid4

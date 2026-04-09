@@ -133,11 +133,12 @@ class TestCosts:
     @pytest.mark.asyncio
     async def test_get_cost_overview(self):
         with patch("app.services.cost_tracker.cost_tracker") as mock_ct:
-            mock_ct.get_overview.return_value = {
+            from unittest.mock import AsyncMock
+            mock_ct.get_overview = AsyncMock(return_value={
                 "total_calls": 10,
                 "total_cost_usd": 0.05,
                 "agents": [],
-            }
+            })
 
             from app.api.dashboard import get_cost_overview
             result = await get_cost_overview()

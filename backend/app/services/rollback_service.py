@@ -4,6 +4,7 @@ Maintains a log of reversible actions with their inverse operations.
 Supports auto-rollback on bad outcomes and manual rollback requests.
 """
 
+from app.db.database import redis_pool
 import json
 import logging
 import time
@@ -64,12 +65,8 @@ class RollbackService:
             return
         self._loaded = True
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if raw:
                 self._actions = json.loads(raw)[-500:]
                 logger.info(f"Loaded {len(self._actions)} rollback actions from Redis")
@@ -78,14 +75,10 @@ class RollbackService:
 
     async def _persist(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            await r.set(
+            await redis_pool.set(
                 _REDIS_KEY, json.dumps(self._actions[-500:]), ex=86400 * 30
             )
-            await r.aclose()
         except Exception as e:
             logger.debug(f"Could not persist rollback actions: {e}")
 

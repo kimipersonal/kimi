@@ -9,25 +9,28 @@ import asyncio
 import json
 import logging
 from collections import defaultdict
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass
 from datetime import datetime, timezone
+
+from app.db.database import redis_pool
 
 logger = logging.getLogger(__name__)
 
 # Approximate costs per 1M tokens (input, output) by model pattern
-# These are rough estimates for Vertex AI models
+# Vertex AI Model Garden pricing (updated 2026-04 to match actual billing)
 _COST_PER_M_TOKENS: dict[str, tuple[float, float]] = {
     "gemini-2.5-flash": (0.15, 0.60),
     "gemini-2.5-flash-lite": (0.075, 0.30),
     "gemini-2.5-pro": (1.25, 10.0),
-    "deepseek": (0.30, 0.90),
-    "kimi": (0.60, 2.00),
-    "glm": (0.30, 0.90),
-    "minimax": (0.30, 0.90),
-    "qwen": (0.15, 0.60),
-    "gpt-oss": (0.15, 0.60),
-    "llama": (0.15, 0.60),
-    "meta": (0.15, 0.60),
+    "deepseek-r1": (0.80, 2.20),       # reasoning model — higher cost
+    "deepseek": (0.55, 1.80),          # v3.x chat models via Model Garden
+    "kimi": (1.10, 4.00),              # kimi-k2-thinking via Model Garden
+    "glm": (0.55, 1.80),
+    "minimax": (0.55, 1.80),
+    "qwen": (0.30, 1.20),
+    "gpt-oss": (0.30, 1.20),
+    "llama": (0.30, 1.20),
+    "meta": (0.30, 1.20),
 }
 
 # Default cost if model not matched
@@ -97,30 +100,22 @@ class CostTracker:
     async def _increment_lifetime(self, cost: float, tokens: int) -> None:
         """Atomically increment lifetime counters in Redis (never reset)."""
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            pipe = r.pipeline()
+            pipe = redis_pool.pipeline()
             pipe.incrbyfloat(self._LIFETIME_COST_KEY, cost)
             pipe.incr(self._LIFETIME_CALLS_KEY)
             pipe.incrby(self._LIFETIME_TOKENS_KEY, tokens)
             await pipe.execute()
-            await r.aclose()
         except Exception as e:
             logger.debug(f"Could not update lifetime counters: {e}")
 
     async def get_lifetime_stats(self) -> dict:
         """Get all-time lifetime cost/calls/tokens from Redis."""
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            pipe = r.pipeline()
+            pipe = redis_pool.pipeline()
             pipe.get(self._LIFETIME_COST_KEY)
             pipe.get(self._LIFETIME_CALLS_KEY)
             pipe.get(self._LIFETIME_TOKENS_KEY)
             results = await pipe.execute()
-            await r.aclose()
             return {
                 "lifetime_cost_usd": round(float(results[0] or 0), 6),
                 "lifetime_calls": int(results[1] or 0),
@@ -136,12 +131,7 @@ class CostTracker:
             return
         self._loaded = True
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            settings = get_settings()
-            r = aioredis.from_url(settings.redis_url, decode_responses=True)
-            raw = await r.get(self._REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(self._REDIS_KEY)
             if raw:
                 data = json.loads(raw)
                 for rec in data:
@@ -172,9 +162,6 @@ class CostTracker:
     async def _save_to_redis(self) -> None:
         """Persist recent cost records to Redis (last 7 days)."""
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            settings = get_settings()
             # Only keep last 7 days of records
             cutoff = datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
             from datetime import timedelta
@@ -192,9 +179,7 @@ class CostTracker:
                 }
                 for r in recent
             ]
-            r = aioredis.from_url(settings.redis_url, decode_responses=True)
-            await r.set(self._REDIS_KEY, json.dumps(data), ex=86400 * 8)
-            await r.aclose()
+            await redis_pool.set(self._REDIS_KEY, json.dumps(data), ex=86400 * 8)
         except Exception as e:
             logger.debug(f"Could not save cost records to Redis: {e}")
 
@@ -320,30 +305,76 @@ class CostTracker:
     def get_all_summaries(self) -> list[dict]:
         return [self.get_agent_summary(aid) for aid in self._agent_totals]
 
-    def get_overview(self) -> dict:
+    async def get_overview(self) -> dict:
         today = datetime.now(timezone.utc).date()
-        total_cost = sum(r.cost_usd for r in self._records)
         cost_today = sum(
             r.cost_usd for r in self._records if self._is_today(r.timestamp, today)
         )
         calls_today = sum(
             1 for r in self._records if self._is_today(r.timestamp, today)
         )
+
+        # Get all-time totals from PostgreSQL (not just in-memory)
+        db_total_cost = 0.0
+        db_total_calls = 0
+        db_agents: list[dict] = []
+        try:
+            from app.db.database import async_session
+            from sqlalchemy import text
+
+            async with async_session() as session:
+                # Overall totals
+                row = (await session.execute(text(
+                    "SELECT COALESCE(SUM(cost_usd), 0), COUNT(*) FROM cost_records"
+                ))).first()
+                if row:
+                    db_total_cost = float(row[0])
+                    db_total_calls = int(row[1])
+
+                # Per-agent totals from DB
+                rows = (await session.execute(text(
+                    "SELECT agent_id, COUNT(*) as calls, "
+                    "COALESCE(SUM(input_tokens), 0), "
+                    "COALESCE(SUM(output_tokens), 0), "
+                    "COALESCE(SUM(cost_usd), 0) "
+                    "FROM cost_records GROUP BY agent_id ORDER BY SUM(cost_usd) DESC"
+                ))).fetchall()
+                for r in rows:
+                    # Merge with in-memory today counts
+                    aid = r[0]
+                    mem = self._agent_totals.get(aid)
+                    db_agents.append({
+                        "agent_id": aid,
+                        "total_calls": int(r[1]),
+                        "total_input_tokens": int(r[2]),
+                        "total_output_tokens": int(r[3]),
+                        "total_cost_usd": round(float(r[4]), 6),
+                        "calls_today": mem.calls_today if mem else 0,
+                        "cost_today_usd": round(mem.cost_today_usd, 6) if mem else 0.0,
+                    })
+        except Exception as e:
+            logger.debug(f"Could not query DB for cost overview: {e}")
+            # Fallback to in-memory
+            db_total_cost = sum(r.cost_usd for r in self._records)
+            db_total_calls = len(self._records)
+            db_agents = self.get_all_summaries()
+
         return {
-            "total_cost_usd": round(total_cost, 6),
+            "total_cost_usd": round(db_total_cost, 6),
             "cost_today_usd": round(cost_today, 6),
             "daily_budget_usd": self._daily_budget,
             "budget_used_pct": round(cost_today / self._daily_budget * 100, 1)
             if self._daily_budget > 0
             else 0,
-            "total_calls": len(self._records),
+            "total_calls": db_total_calls,
             "calls_today": calls_today,
-            "agents": self.get_all_summaries(),
+            "agents": db_agents,
+            "note": "Costs are estimates based on approximate token rates",
         }
 
     async def get_overview_with_lifetime(self) -> dict:
         """Get overview including lifetime all-time stats."""
-        overview = self.get_overview()
+        overview = await self.get_overview()
         lifetime = await self.get_lifetime_stats()
         overview.update(lifetime)
         return overview

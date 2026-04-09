@@ -5,6 +5,7 @@ The CEO can create A/B tests where two agents with different configurations
 compared to pick the winner.
 """
 
+from app.db.database import redis_pool
 import json
 import logging
 from dataclasses import dataclass, field
@@ -321,21 +322,13 @@ class ABTestingService:
 
     async def _persist(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            await r.set(_REDIS_KEY, json.dumps(self._experiments), ex=86400 * 30)
-            await r.aclose()
+            await redis_pool.set(_REDIS_KEY, json.dumps(self._experiments), ex=86400 * 30)
         except Exception as e:
             logger.debug(f"Could not persist A/B experiments: {e}")
 
     async def load_from_redis(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if raw:
                 self._experiments = json.loads(raw)
                 logger.info(f"Loaded A/B testing: {len(self._experiments)} experiments")

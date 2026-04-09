@@ -8,9 +8,9 @@ Generates weekly/daily reports showing:
   - Recommendations for threshold adjustments
 """
 
+from app.db.database import redis_pool
 import json
 import logging
-import time
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger(__name__)
@@ -30,12 +30,8 @@ class AccountabilityReportService:
             return
         self._loaded = True
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if raw:
                 self._reports = json.loads(raw)[-50:]
                 logger.info(
@@ -46,14 +42,10 @@ class AccountabilityReportService:
 
     async def _persist(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            await r.set(
+            await redis_pool.set(
                 _REDIS_KEY, json.dumps(self._reports[-50:]), ex=86400 * 60
             )
-            await r.aclose()
         except Exception as e:
             logger.debug(f"Could not persist accountability reports: {e}")
 

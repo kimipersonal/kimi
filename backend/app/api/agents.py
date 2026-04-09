@@ -3,13 +3,14 @@
 import asyncio
 import json
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from app.agents.registry import registry
+from app.api.auth import verify_api_key
 from app.models.schemas import AgentCommand
 from app.services.event_bus import event_bus
 
-router = APIRouter(prefix="/api/agents", tags=["agents"])
+router = APIRouter(prefix="/api/agents", tags=["agents"], dependencies=[Depends(verify_api_key)])
 
 
 @router.get("")

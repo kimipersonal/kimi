@@ -69,6 +69,8 @@ class BaseAgent:
         self._paused = asyncio.Event()
         self._paused.set()  # Not paused initially
         self._stopped = False
+        self._run_lock = asyncio.Lock()
+        self._run_lock_acquired_at: float | None = None
         self._autonomous_task: asyncio.Task | None = None
         self._graph = self._build_graph()
 
@@ -225,7 +227,7 @@ class BaseAgent:
 
         return graph.compile()
 
-    MAX_TOOL_ROUNDS = 10
+    MAX_TOOL_ROUNDS = 25
 
     def _should_act(self, state: AgentState) -> str:
         """Decide whether to proceed to the act node or end."""
@@ -309,6 +311,18 @@ class BaseAgent:
             tool_calls = response.get("tool_calls") or []
             parsed_calls = [self._parse_tool_call(tc) for tc in tool_calls] if tool_calls else []
 
+            # Broadcast thinking content if substantial
+            thinking_text = (response["content"] or "").strip()
+            if len(thinking_text) > 30:
+                try:
+                    await self.log_activity(
+                        "thinking_content",
+                        {"content": thinking_text[:300],
+                         "has_tool_calls": bool(parsed_calls)},
+                    )
+                except Exception:
+                    pass
+
             # Build assistant message — attach tool_calls so the LLM
             # sees a proper function-calling conversation on the next turn
             assistant_msg: dict = {"role": "assistant", "content": response["content"] or ""}
@@ -387,6 +401,15 @@ class BaseAgent:
                 result = await self.execute_tool(tool_name, tool_args)
                 _dur = (_time.perf_counter() - _t0) * 1000
                 tool_results.append({"tool": tool_name, "result": result})
+                # Broadcast tool success
+                try:
+                    await self.log_activity(
+                        "tool_result",
+                        {"tool": tool_name, "success": True, "duration_ms": round(_dur),
+                         "preview": str(result)[:200]},
+                    )
+                except Exception:
+                    pass
                 # Record analytics
                 try:
                     from app.services.tool_analytics import tool_analytics
@@ -397,6 +420,16 @@ class BaseAgent:
                 _dur = (_time.perf_counter() - _t0) * 1000
                 logger.error(f"Tool {tool_name} failed: {e}")
                 tool_results.append({"tool": tool_name, "error": str(e)})
+                # Broadcast tool failure
+                try:
+                    await self.log_activity(
+                        "tool_result",
+                        {"tool": tool_name, "success": False, "duration_ms": round(_dur),
+                         "error": str(e)[:200]},
+                        level="error",
+                    )
+                except Exception:
+                    pass
                 try:
                     from app.services.tool_analytics import tool_analytics
                     tool_analytics.record(tool_name, self.agent_id, self.name, False, _dur, str(e))
@@ -773,7 +806,6 @@ class BaseAgent:
 
             # Generate embedding
             try:
-                from app.services.memory_service import store_memory
                 from app.services.llm_router import get_embedding
                 embedding = await get_embedding(content)
             except Exception:
@@ -874,6 +906,38 @@ class BaseAgent:
         if self._stopped:
             return "Agent is stopped. Start it first."
 
+        # Auto-release a stale lock (stuck > 5 minutes)
+        import time as _time_mod
+        if self._run_lock.locked() and self._run_lock_acquired_at:
+            held_for = _time_mod.monotonic() - self._run_lock_acquired_at
+            if held_for > 300:
+                logger.warning(
+                    f"Agent {self.name}: force-releasing stale _run_lock "
+                    f"(held for {held_for:.0f}s)"
+                )
+                try:
+                    self._run_lock.release()
+                except RuntimeError:
+                    pass
+                self._run_lock_acquired_at = None
+
+        if self._run_lock.locked():
+            return "Agent is already processing a request. Please wait."
+
+        await self._run_lock.acquire()
+        self._run_lock_acquired_at = _time_mod.monotonic()
+        try:
+            return await self._run_impl(user_input, history)
+        finally:
+            self._run_lock_acquired_at = None
+            try:
+                self._run_lock.release()
+            except RuntimeError:
+                pass
+
+    async def _run_impl(self, user_input: str, history: list[dict] | None = None) -> str:
+        """Internal implementation of run(), guarded by _run_lock."""
+
         # Rate limiting check
         from app.services.rate_limiter import rate_limiter
         allowed, reason = await rate_limiter.check(self.agent_id)
@@ -918,7 +982,25 @@ class BaseAgent:
                     if m.get("role") == "tool"
                 ]
                 if tool_msgs:
-                    summaries = [m.get("content", "")[:300] for m in tool_msgs[-3:]]
+                    summaries = []
+                    for m in tool_msgs[-3:]:
+                        raw = m.get("content", "")
+                        # Try to parse JSON and make it human-readable
+                        try:
+                            import json as _json_fb
+                            parsed = _json_fb.loads(raw)
+                            if isinstance(parsed, dict):
+                                parts = []
+                                for k, v in parsed.items():
+                                    if isinstance(v, (list, dict)):
+                                        parts.append(f"{k}: {len(v) if isinstance(v, list) else 'see details'}")
+                                    else:
+                                        parts.append(f"{k}: {v}")
+                                summaries.append(", ".join(parts[:5]))
+                            else:
+                                summaries.append(str(parsed)[:200])
+                        except Exception:
+                            summaries.append(raw[:200])
                     output = "Actions completed:\n" + "\n".join(
                         f"- {s}" for s in summaries if s
                     )

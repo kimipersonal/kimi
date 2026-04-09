@@ -5,11 +5,12 @@ error patterns. Groups errors by type, time, agent, and tool to identify
 systemic issues and suggest root-cause fixes.
 """
 
+from app.db.database import redis_pool
 import json
 import logging
 import re
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -286,25 +287,17 @@ class ErrorPatternDetector:
 
     async def save_to_redis(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
             data = {
                 "patterns": self._patterns,
                 "buffer_size": len(self._error_buffer),
             }
-            await r.set(_REDIS_KEY, json.dumps(data), ex=86400 * 30)
-            await r.aclose()
+            await redis_pool.set(_REDIS_KEY, json.dumps(data), ex=86400 * 30)
         except Exception as e:
             logger.debug(f"Could not save error patterns: {e}")
 
     async def load_from_redis(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if raw:
                 data = json.loads(raw)
                 self._patterns = data.get("patterns", {})

@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import type { StreamStep } from '@/lib/api'
+import type { StreamStep, ChatMessage as APIChatMessage } from '@/lib/api'
 
 interface ChatMessage {
   role: 'user' | 'assistant'
@@ -21,17 +21,36 @@ export function ChatPanel({
   onSend,
   onSendStream,
   loading,
+  initialMessages,
 }: {
   agentId: string
   agentName: string
   onSend: (message: string) => Promise<string>
   onSendStream?: (message: string, onStep: (step: StreamStep) => void) => Promise<string>
   loading: boolean
+  initialMessages?: APIChatMessage[]
 }) {
   const [input, setInput] = useState('')
-  const [messages, setMessages] = useState<ChatMessage[]>([])
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    (initialMessages ?? [])
+      .filter(m => m.role === 'user' || m.role === 'assistant')
+      .map(m => ({ role: m.role, content: m.content, timestamp: new Date(m.timestamp) }))
+  )
   const [steps, setSteps] = useState<ThinkingStep[]>([])
   const scrollRef = useRef<HTMLDivElement>(null)
+  const initializedRef = useRef(false)
+
+  // Seed messages from server history once it arrives (agent data loads async)
+  useEffect(() => {
+    if (!initializedRef.current && initialMessages && initialMessages.length > 0) {
+      initializedRef.current = true
+      setMessages(
+        initialMessages
+          .filter(m => m.role === 'user' || m.role === 'assistant')
+          .map(m => ({ role: m.role as 'user' | 'assistant', content: m.content, timestamp: new Date(m.timestamp) }))
+      )
+    }
+  }, [initialMessages])
 
   useEffect(() => {
     if (scrollRef.current) {

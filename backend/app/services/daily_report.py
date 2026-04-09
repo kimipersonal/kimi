@@ -5,7 +5,6 @@ audit log, and agent registry to produce a comprehensive daily report.
 Sends via Telegram and event bus.
 """
 
-import json
 import logging
 from datetime import datetime, timezone
 
@@ -90,12 +89,15 @@ async def generate_daily_report() -> dict:
     except Exception as e:
         report["sections"]["operations"] = {"error": str(e)}
 
-    # --- 4. Trading Summary ---
+    # --- 4. Trading Summary (only if trading is configured) ---
     try:
-        from app.services.trading.trading_service import trading_service
+        from app.agents.ceo import _is_trading_configured
 
-        portfolio = await trading_service.get_portfolio_summary()
-        report["sections"]["trading"] = portfolio
+        if _is_trading_configured():
+            from app.services.trading.trading_service import trading_service
+
+            portfolio = await trading_service.get_portfolio_summary()
+            report["sections"]["trading"] = portfolio
     except Exception as e:
         report["sections"]["trading"] = {"error": str(e)}
 
@@ -263,7 +265,7 @@ def format_report_text(report: dict) -> str:
 
 
 async def send_daily_report_telegram() -> None:
-    """Generate the daily report and send it via Telegram to the owner."""
+    """Generate the daily report and send it as a PDF via Telegram to the owner."""
     try:
         report = await generate_daily_report()
         text = format_report_text(report)
@@ -273,24 +275,41 @@ async def send_daily_report_telegram() -> None:
 
         settings = get_settings()
         if telegram_bot._running and telegram_bot._app and settings.telegram_owner_chat_id:
-            from telegram.constants import ParseMode
+            chat_id = int(settings.telegram_owner_chat_id)
 
-            # Telegram has 4096 char limit — split if needed
-            max_len = settings.max_telegram_msg_len
-            if len(text) <= max_len:
-                await telegram_bot._app.bot.send_message(
-                    chat_id=int(settings.telegram_owner_chat_id),
-                    text=text,
+            # Generate PDF
+            try:
+                from app.services.pdf_report import generate_report_pdf
+                from datetime import datetime, timezone
+                import io
+
+                pdf_bytes = generate_report_pdf(report)
+                date_tag = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                filename = f"AI_Holding_Daily_Report_{date_tag}.pdf"
+
+                await telegram_bot._app.bot.send_document(
+                    chat_id=chat_id,
+                    document=io.BytesIO(pdf_bytes),
+                    filename=filename,
+                    caption="📊 Daily Intelligence Report — see attached PDF for full details.",
                 )
-            else:
-                # Split into chunks
-                chunks = [text[i : i + max_len] for i in range(0, len(text), max_len)]
-                for chunk in chunks:
+                logger.info("Daily intelligence report sent as PDF via Telegram")
+            except Exception as pdf_err:
+                logger.warning(f"PDF generation failed, falling back to text: {pdf_err}")
+                # Fallback: send as plain text
+                max_len = settings.max_telegram_msg_len
+                if len(text) <= max_len:
                     await telegram_bot._app.bot.send_message(
-                        chat_id=int(settings.telegram_owner_chat_id),
-                        text=chunk,
+                        chat_id=chat_id,
+                        text=text,
                     )
-            logger.info("Daily intelligence report sent via Telegram")
+                else:
+                    chunks = [text[i : i + max_len] for i in range(0, len(text), max_len)]
+                    for chunk in chunks:
+                        await telegram_bot._app.bot.send_message(
+                            chat_id=chat_id,
+                            text=chunk,
+                        )
 
         # Also broadcast via event bus for dashboard
         from app.services.event_bus import event_bus

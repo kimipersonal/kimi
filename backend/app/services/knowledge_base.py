@@ -6,7 +6,6 @@ semantic search. Categories include: lessons_learned, best_practices, market_ins
 operational_rules, and custom categories.
 """
 
-import json
 import logging
 from datetime import datetime, timezone
 from uuid import uuid4

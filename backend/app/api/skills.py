@@ -1,10 +1,11 @@
 """Skills API — browse, manage, and query the skills marketplace."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
+from app.api.auth import verify_api_key
 from app.skills.registry import skill_registry
 
-router = APIRouter(prefix="/api/skills", tags=["skills"])
+router = APIRouter(prefix="/api/skills", tags=["skills"], dependencies=[Depends(verify_api_key)])
 
 
 @router.get("")

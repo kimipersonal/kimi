@@ -37,9 +37,11 @@ class AgentRegistry:
         return list(self._agents.values())
 
     def get_by_company(self, company_id: str) -> list[BaseAgent]:
-        """Get all agents belonging to a company (by checking their agent_id against DB)."""
-        # Note: Filtering by company requires DB lookup, keeping it simple for now
-        return list(self._agents.values())
+        """Get all agents belonging to a specific company."""
+        return [
+            a for a in self._agents.values()
+            if getattr(a, "company_id", None) == company_id
+        ]
 
     async def stop_all(self):
         """Stop all agents gracefully."""

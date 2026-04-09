@@ -5,11 +5,10 @@ enabling collective learning. Uses the existing AgentMemory table
 with company-scoped queries.
 """
 
-import json
 import logging
 from uuid import uuid4
 
-from sqlalchemy import text, select, delete, func
+from sqlalchemy import text
 
 from app.db.database import async_session
 from app.db.models import AgentMemory

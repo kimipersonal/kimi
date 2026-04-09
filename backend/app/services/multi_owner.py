@@ -8,9 +8,9 @@ Supports multiple human owners with different permission roles:
 Owners persist in Redis and are checked by the approval system.
 """
 
+from app.db.database import redis_pool
 import json
 import logging
-import time
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -53,12 +53,8 @@ class MultiOwnerService:
             return
         self._loaded = True
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if raw:
                 self._owners = json.loads(raw)
                 logger.info(f"Loaded {len(self._owners)} owners from Redis")
@@ -67,12 +63,8 @@ class MultiOwnerService:
 
     async def _persist(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            await r.set(_REDIS_KEY, json.dumps(self._owners), ex=86400 * 90)
-            await r.aclose()
+            await redis_pool.set(_REDIS_KEY, json.dumps(self._owners), ex=86400 * 90)
         except Exception as e:
             logger.debug(f"Could not persist owners: {e}")
 

@@ -6,6 +6,7 @@ import logging
 from datetime import datetime, timezone
 from uuid import uuid4
 
+from app.db.database import redis_pool
 logger = logging.getLogger(__name__)
 
 
@@ -55,11 +56,7 @@ class Scheduler:
     async def load_from_redis(self) -> None:
         """Load scheduled tasks from Redis on startup."""
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(self._REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(self._REDIS_KEY)
             if raw:
                 tasks_data = json.loads(raw)
                 for td in tasks_data:
@@ -82,12 +79,8 @@ class Scheduler:
     async def _save_to_redis(self) -> None:
         """Persist scheduled tasks to Redis."""
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
             data = [t.to_dict() for t in self._tasks.values()]
-            await r.set(self._REDIS_KEY, json.dumps(data))
-            await r.aclose()
+            await redis_pool.set(self._REDIS_KEY, json.dumps(data))
         except Exception as e:
             logger.debug(f"Could not save scheduled tasks: {e}")
 
@@ -150,6 +143,23 @@ class Scheduler:
         self._start_task(task)
         await self._save_to_redis()
         return True
+
+    async def update_task(self, task_id: str, description: str | None = None, interval_seconds: int | None = None) -> dict | None:
+        """Update a scheduled task's description and/or interval."""
+        task = self._tasks.get(task_id)
+        if not task:
+            return None
+        if description is not None:
+            task.description = description
+        if interval_seconds is not None:
+            task.interval_seconds = interval_seconds
+            # Restart the loop with new interval if running
+            if task.enabled and task._handle and not task._handle.done():
+                task._handle.cancel()
+                task._handle = None
+                self._start_task(task)
+        await self._save_to_redis()
+        return task.to_dict()
 
     async def add_one_shot_task(
         self,

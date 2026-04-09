@@ -1,10 +1,13 @@
 """Tool Usage Analytics — track tool calls, success/fail rates, and timing per agent."""
 
+import asyncio
 import json
 import logging
 import time
 from collections import defaultdict
-from dataclasses import dataclass, field
+from dataclasses import dataclass
+
+from app.db.database import redis_pool
 
 logger = logging.getLogger(__name__)
 
@@ -79,7 +82,10 @@ class ToolAnalytics:
         # Periodically persist counters to Redis (every 50 calls)
         total = sum(self._tool_counts.values())
         if total % 50 == 0:
-            self._save_to_redis()
+            try:
+                asyncio.get_running_loop().create_task(self._save_to_redis())
+            except RuntimeError:
+                pass  # No event loop
 
     def get_stats(self) -> dict:
         """Get aggregated tool usage statistics."""
@@ -137,12 +143,9 @@ class ToolAnalytics:
         self._tool_total_ms.clear()
         self._agent_tool_counts.clear()
 
-    def _save_to_redis(self) -> None:
-        """Persist aggregated counters to Redis (sync, fire-and-forget)."""
+    async def _save_to_redis(self) -> None:
+        """Persist aggregated counters to Redis."""
         try:
-            import redis
-            from app.config import get_settings
-
             data = {
                 "tool_counts": dict(self._tool_counts),
                 "tool_successes": dict(self._tool_successes),
@@ -152,21 +155,14 @@ class ToolAnalytics:
                     aid: dict(tc) for aid, tc in self._agent_tool_counts.items()
                 },
             }
-            r = redis.from_url(get_settings().redis_url, decode_responses=True)
-            r.set(_REDIS_KEY, json.dumps(data), ex=86400 * 30)  # 30d TTL
-            r.close()
+            await redis_pool.set(_REDIS_KEY, json.dumps(data), ex=86400 * 30)  # 30d TTL
         except Exception as e:
             logger.debug(f"Could not save tool analytics to Redis: {e}")
 
-    def load_from_redis(self) -> None:
+    async def load_from_redis(self) -> None:
         """Load aggregated counters from Redis on startup."""
         try:
-            import redis
-            from app.config import get_settings
-
-            r = redis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = r.get(_REDIS_KEY)
-            r.close()
+            raw = await redis_pool.get(_REDIS_KEY)
             if not raw:
                 return
             data = json.loads(raw)

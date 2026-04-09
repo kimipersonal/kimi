@@ -2,10 +2,28 @@
 
 import { useEffect, useState, useCallback } from 'react'
 import { api } from '@/lib/api'
-import type { CostOverview, HealthStatus, CircuitStatus, ModelsResponse } from '@/lib/api'
-import { Settings as SettingsIcon, Check, Loader2 } from 'lucide-react'
+import type { CostOverview, HealthStatus, CircuitStatus, ModelsResponse, ScheduledTask } from '@/lib/api'
+import { Settings as SettingsIcon, Check, Loader2, Pause, Play, Trash2, Pencil } from 'lucide-react'
 import { LoadingSpinner } from '@/components/ui/LoadingSpinner'
 import { ErrorBanner } from '@/components/ui/ErrorBanner'
+
+function formatInterval(seconds: number): string {
+  if (seconds >= 86400) return `${Math.round(seconds / 86400)}d`
+  if (seconds >= 3600) return `${Math.round(seconds / 3600)}h`
+  if (seconds >= 60) return `${Math.round(seconds / 60)}m`
+  return `${seconds}s`
+}
+
+function formatTimeAgo(iso: string | null): string {
+  if (!iso) return 'Never'
+  const diff = Date.now() - new Date(iso).getTime()
+  const mins = Math.floor(diff / 60000)
+  if (mins < 1) return 'Just now'
+  if (mins < 60) return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24) return `${hrs}h ago`
+  return `${Math.floor(hrs / 24)}d ago`
+}
 
 export default function SettingsPage() {
   const [settings, setSettings] = useState<Record<string, unknown> | null>(null)
@@ -13,6 +31,7 @@ export default function SettingsPage() {
   const [health, setHealth] = useState<HealthStatus | null>(null)
   const [circuits, setCircuits] = useState<CircuitStatus[]>([])
   const [modelsData, setModelsData] = useState<ModelsResponse | null>(null)
+  const [schedules, setSchedules] = useState<ScheduledTask[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -23,22 +42,29 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
+  // Schedule editing state
+  const [editingSchedule, setEditingSchedule] = useState<string | null>(null)
+  const [editInterval, setEditInterval] = useState('')
+  const [scheduleLoading, setScheduleLoading] = useState<string | null>(null)
+
   const refresh = useCallback(async () => {
     setError(null)
     let failed = false
     try {
-      const [s, c, h, cb, m] = await Promise.all([
+      const [s, c, h, cb, m, sched] = await Promise.all([
         api.getSettings(),
         api.getCosts(),
         api.getHealth(),
         api.getCircuits(),
         api.getModels(),
+        api.getSchedules(),
       ])
       setSettings(s)
       setCosts(c)
       setHealth(h)
       setCircuits(cb.circuits)
       setModelsData(m)
+      setSchedules(sched.schedules)
       setTierFast(m.current_tiers.fast)
       setTierSmart(m.current_tiers.smart)
       setTierReasoning(m.current_tiers.reasoning)
@@ -83,6 +109,40 @@ export default function SettingsPage() {
   )
 
   if (loading) return <LoadingSpinner message="Loading settings..." />
+
+  const handleScheduleToggle = async (taskId: string, enabled: boolean) => {
+    setScheduleLoading(taskId)
+    try {
+      if (enabled) {
+        await api.pauseSchedule(taskId)
+      } else {
+        await api.resumeSchedule(taskId)
+      }
+      setSchedules(prev => prev.map(s => s.task_id === taskId ? { ...s, enabled: !enabled } : s))
+    } catch { /* ignore */ }
+    setScheduleLoading(null)
+  }
+
+  const handleScheduleDelete = async (taskId: string) => {
+    setScheduleLoading(taskId)
+    try {
+      await api.deleteSchedule(taskId)
+      setSchedules(prev => prev.filter(s => s.task_id !== taskId))
+    } catch { /* ignore */ }
+    setScheduleLoading(null)
+  }
+
+  const handleScheduleEdit = async (taskId: string) => {
+    const seconds = parseInt(editInterval, 10)
+    if (!seconds || seconds < 60) return
+    setScheduleLoading(taskId)
+    try {
+      const updated = await api.updateSchedule(taskId, { interval_seconds: seconds })
+      setSchedules(prev => prev.map(s => s.task_id === taskId ? updated : s))
+      setEditingSchedule(null)
+    } catch { /* ignore */ }
+    setScheduleLoading(null)
+  }
 
   const budgetPct = costs?.budget_used_pct ?? 0
   const budgetColor = budgetPct > 80 ? 'var(--danger)' : budgetPct > 50 ? 'var(--warning)' : 'var(--success)'
@@ -147,6 +207,7 @@ export default function SettingsPage() {
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
           <h3 className="text-sm font-semibold px-4 py-3 border-b border-[var(--border)]">
             💰 Cost Tracking
+            <span className="ml-2 text-[10px] font-normal text-[var(--text-secondary)]">(estimated)</span>
           </h3>
           <div className="p-4 space-y-3">
             {/* Budget bar */}
@@ -190,6 +251,92 @@ export default function SettingsPage() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Scheduled Tasks */}
+      {schedules.length > 0 && (
+        <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)]">
+          <h3 className="text-sm font-semibold px-4 py-3 border-b border-[var(--border)]">
+            📅 Scheduled Tasks
+            <span className="ml-2 text-[10px] font-normal text-[var(--text-secondary)]">{schedules.length} tasks</span>
+          </h3>
+          <div className="divide-y divide-[var(--border)]">
+            {schedules.map(task => (
+              <div key={task.task_id} className="px-4 py-3">
+                <div className="flex items-center justify-between">
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className={`w-2 h-2 rounded-full ${task.enabled ? 'bg-[var(--success)]' : 'bg-[var(--text-secondary)]'}`} />
+                      <span className="text-sm font-medium truncate">{task.description}</span>
+                    </div>
+                    <div className="flex items-center gap-3 mt-1 text-[10px] text-[var(--text-secondary)]">
+                      <span>Agent: <span className="font-mono">{task.agent_id}</span></span>
+                      <span>Every {formatInterval(task.interval_seconds)}</span>
+                      <span>{task.run_count} runs</span>
+                      <span>Last: {formatTimeAgo(task.last_run)}</span>
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 ml-2">
+                    {editingSchedule === task.task_id ? (
+                      <div className="flex items-center gap-1">
+                        <input
+                          type="number"
+                          min={60}
+                          step={60}
+                          value={editInterval}
+                          onChange={e => setEditInterval(e.target.value)}
+                          className="w-20 text-xs px-2 py-1 rounded bg-[var(--bg-secondary)] border border-[var(--border)] text-[var(--text-primary)]"
+                          placeholder="seconds"
+                        />
+                        <button
+                          onClick={() => handleScheduleEdit(task.task_id)}
+                          disabled={scheduleLoading === task.task_id}
+                          className="p-1 rounded hover:bg-[var(--success)]/20 text-[var(--success)]"
+                          title="Save"
+                        >
+                          <Check size={14} />
+                        </button>
+                        <button
+                          onClick={() => setEditingSchedule(null)}
+                          className="p-1 rounded hover:bg-[var(--bg-secondary)] text-[var(--text-secondary)]"
+                          title="Cancel"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ) : (
+                      <>
+                        <button
+                          onClick={() => { setEditingSchedule(task.task_id); setEditInterval(String(task.interval_seconds)) }}
+                          className="p-1 rounded hover:bg-[var(--bg-secondary)] text-[var(--text-secondary)]"
+                          title="Edit interval"
+                        >
+                          <Pencil size={14} />
+                        </button>
+                        <button
+                          onClick={() => handleScheduleToggle(task.task_id, task.enabled)}
+                          disabled={scheduleLoading === task.task_id}
+                          className={`p-1 rounded ${task.enabled ? 'hover:bg-[var(--warning)]/20 text-[var(--warning)]' : 'hover:bg-[var(--success)]/20 text-[var(--success)]'}`}
+                          title={task.enabled ? 'Pause' : 'Resume'}
+                        >
+                          {task.enabled ? <Pause size={14} /> : <Play size={14} />}
+                        </button>
+                        <button
+                          onClick={() => handleScheduleDelete(task.task_id)}
+                          disabled={scheduleLoading === task.task_id}
+                          className="p-1 rounded hover:bg-[var(--danger)]/20 text-[var(--danger)]"
+                          title="Delete"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       )}

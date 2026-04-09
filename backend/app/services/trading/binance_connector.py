@@ -92,15 +92,16 @@ class BinanceTestnetConnector(BaseTradingConnector):
         }
         usdt_balance = balances.get("USDT", 0)
 
+        # Count actual traded positions (not Testnet pre-funded dust)
+        positions = await self.get_positions()
+
         return AccountInfo(
             platform=self.platform_name,
             account_id="testnet",
             balance=usdt_balance,
             equity=usdt_balance,  # Simplified — would need price conversion for full equity
             currency="USDT",
-            open_positions=sum(
-                1 for v in balances.values() if v > 0 and v != usdt_balance
-            ),
+            open_positions=len(positions),
             is_demo=True,
         )
 
@@ -215,7 +216,11 @@ class BinanceTestnetConnector(BaseTradingConnector):
         ]
 
     async def get_positions(self) -> list[Position]:
-        """Binance spot doesn't have 'positions' — return non-zero balances."""
+        """Binance spot doesn't have 'positions' — return non-zero balances.
+
+        Only includes assets with meaningful holdings and excludes stablecoins
+        and Binance Testnet pre-funded dust balances.
+        """
         params = self._sign({})
         resp = await self.client.get(
             f"{self.base_url}/v3/account",
@@ -225,12 +230,16 @@ class BinanceTestnetConnector(BaseTradingConnector):
         resp.raise_for_status()
         data = resp.json()
 
+        # Stablecoins and quote currencies to exclude from positions
+        QUOTE_ASSETS = {"USDT", "BUSD", "USDC", "USD", "DAI", "TUSD", "FDUSD"}
+
+        # Get ticker prices so we can filter by USD value
         positions = []
         for b in data.get("balances", []):
             free = float(b["free"])
             locked = float(b["locked"])
             total = free + locked
-            if total > 0 and b["asset"] not in ("USDT", "BUSD", "USDC"):
+            if total > 0 and b["asset"] not in QUOTE_ASSETS:
                 positions.append(
                     Position(
                         id=b["asset"],
@@ -240,6 +249,27 @@ class BinanceTestnetConnector(BaseTradingConnector):
                         entry_price=0,  # Binance doesn't track entry price for spot
                     )
                 )
+
+        # If there are too many positions (Binance Testnet pre-funds hundreds
+        # of assets), only return positions we actually traded.
+        if len(positions) > 20:
+            from app.db.database import async_session
+            from sqlalchemy import text
+            try:
+                async with async_session() as session:
+                    result = await session.execute(
+                        text("SELECT DISTINCT symbol FROM trades WHERE platform = 'Binance Testnet' AND status = 'open'")
+                    )
+                    traded_symbols = {row[0] for row in result.fetchall()}
+                if traded_symbols:
+                    positions = [p for p in positions if p.symbol in traded_symbols]
+                else:
+                    # No tracked trades — return empty rather than 452 pre-funded balances
+                    positions = []
+            except Exception:
+                # Fallback: return empty rather than misleading 452 positions
+                positions = []
+
         return positions
 
     async def close_position(self, position_id: str) -> Order:

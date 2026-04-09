@@ -5,10 +5,11 @@ percentage change alerts, and periodic market scans. Triggers notifications
 via the event bus and Telegram when conditions are met.
 """
 
+from app.db.database import redis_pool
 import asyncio
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
@@ -94,25 +95,17 @@ class MarketAlertService:
 
     async def save_to_redis(self):
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
             data = {
                 "alerts": {k: v.to_dict() for k, v in self._alerts.items()},
                 "last_prices": self._last_prices,
             }
-            await r.set(self._REDIS_KEY, json.dumps(data), ex=86400 * 30)
-            await r.aclose()
+            await redis_pool.set(self._REDIS_KEY, json.dumps(data), ex=86400 * 30)
         except Exception as e:
             logger.debug(f"Could not save market alerts: {e}")
 
     async def load_from_redis(self):
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(self._REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(self._REDIS_KEY)
             if raw:
                 data = json.loads(raw)
                 for aid, adict in data.get("alerts", {}).items():

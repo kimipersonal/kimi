@@ -9,12 +9,17 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
+from slowapi.util import get_remote_address
+from sqlalchemy import text as sa_text
 
 from app.config import get_settings
 from app.db.database import init_db
-from app.agents.ceo import CEOAgent
 from app.agents.registry import registry
 from app.api import agents, companies, dashboard, skills, trading, websocket, webhooks
+from app import startup as _startup
 
 # Ensure logs directory exists
 _log_dir = Path(__file__).resolve().parents[1] / "logs"
@@ -51,194 +56,68 @@ async def lifespan(app: FastAPI):
     """Startup and shutdown logic."""
     logger.info("=== AI Holding Starting ===")
 
+    # ── Environment validation ──
+    if not settings.debug:
+        missing = []
+        if not settings.api_key:
+            missing.append("API_KEY")
+        if settings.secret_key == "change-me-in-production":
+            missing.append("SECRET_KEY (still default)")
+        if missing:
+            logger.warning("Production security: missing %s", ", ".join(missing))
+
     # Initialize database
     await init_db()
     logger.info("Database initialized")
 
-    # Discover and load plugins
-    from app.plugins.registry import plugin_registry
+    # Plugins, skills, state summary
+    await _startup.load_plugins()
+    await _startup.load_skills()
 
-    enabled = settings.enabled_plugins.split(",") if settings.enabled_plugins else None
-    await plugin_registry.discover_and_load(enabled)
-    await plugin_registry.initialize_all()
-    status = plugin_registry.get_status()
-    logger.info(
-        f"Plugins loaded: {len(status['providers'])} providers, "
-        f"{len(status['channels'])} channels, {len(status['tools'])} tools"
-    )
+    state_summary, company_count, agent_count = await _startup.build_state_summary()
 
-    # Discover and load skills
-    from app.skills.registry import skill_registry
+    # Create and register CEO
+    ceo = await _startup.register_ceo(state_summary)
 
-    await skill_registry.discover_and_load()
-    await skill_registry.initialize_all()
-    skills_status = skill_registry.get_status()
-    logger.info(
-        f"Skills loaded: {skills_status['total']} total, "
-        f"{skills_status['enabled']} enabled"
-    )
+    # Restore sub-agents + orphaned tasks
+    await _startup.restore_runtime()
 
-    # Query existing state from DB for CEO's system prompt
-    from app.db.database import async_session
-    from app.db.models import Agent as AgentModel, AgentStatus, ModelTier
-    from app.db.models import Company as CompanyModel
+    # Core services (Telegram, trading, scheduler, health, watchdog, analytics)
+    await _startup.start_services()
 
-    state_summary = ""
-    async with async_session() as session:
-        from sqlalchemy import select, func
+    # Phase 2-5 services
+    await _startup.load_phase_services()
 
-        company_count = (
-            await session.execute(select(func.count()).select_from(CompanyModel))
-        ).scalar() or 0
-        agent_count = (
-            await session.execute(
-                select(func.count())
-                .select_from(AgentModel)
-                .where(AgentModel.id != "ceo")
-            )
-        ).scalar() or 0
+    # Background tasks
+    _bg_tasks = await _create_background_tasks(ceo, company_count, agent_count)
 
-        if company_count > 0 or agent_count > 0:
-            # Build summary of existing companies and agents
-            companies = (await session.execute(select(CompanyModel))).scalars().all()
-            agents = (
-                await session.execute(
-                    select(AgentModel).where(AgentModel.id != "ceo")
-                )
-            ).scalars().all()
+    # Budget wiring
+    await _wire_budget_alerts(ceo)
 
-            lines = [
-                f"- The holding has {company_count} active company(ies) and {agent_count} deployed agent(s).",
-                "- You MUST call check_status to get full details before answering about companies or agents.",
-                "- Existing companies:",
-            ]
-            for c in companies:
-                company_agents = [a for a in agents if a.company_id == c.id]
-                agent_names = ", ".join(a.name for a in company_agents) if company_agents else "no agents"
-                lines.append(f"  * {c.name} (type: {c.type}) — agents: {agent_names}")
+    # Tunnel
+    await _startup.setup_tunnel()
 
-            state_summary = "\n".join(lines)
+    yield
 
-    # Create and register the CEO agent
-    ceo = CEOAgent(agent_id="ceo", state_summary=state_summary)
-    registry.register(ceo)
-    await ceo.start()
+    # Shutdown
+    logger.info("=== AI Holding Shutting Down ===")
+    for t in _bg_tasks:
+        t.cancel()
+    await _startup.shutdown_all()
 
-    # Ensure CEO exists in DB
-    async with async_session() as session:
-        existing = await session.get(AgentModel, "ceo")
-        if not existing:
-            db_ceo = AgentModel(
-                id="ceo",
-                name="CEO",
-                role="Chief Executive Officer",
-                status=AgentStatus.IDLE,
-                model_tier=ModelTier.REASONING,
-                system_prompt=ceo.system_prompt,
-                tools=ceo.tools,
-            )
-            session.add(db_ceo)
-            await session.commit()
-            logger.info("CEO saved to database")
 
-    logger.info("CEO Agent registered and started")
+# ---------------------------------------------------------------------------
+# Background task factories
+# ---------------------------------------------------------------------------
 
-    # Restore sub-agents from DB
-    from app.services.company_manager import restore_agents_from_db
+async def _create_background_tasks(ceo, company_count: int, agent_count: int) -> list:
+    """Spawn all recurring background tasks and return their handles."""
 
-    restored = await restore_agents_from_db()
-    if restored:
-        logger.info(f"Restored {restored} agent(s) from database")
-
-    # Recover orphaned tasks from previous runs
-    from app.services.task_queue import task_queue
-
-    orphaned = await task_queue.recover_orphaned_tasks()
-    if orphaned:
-        logger.info(f"Recovered {orphaned} orphaned task(s)")
-
-    # Start Telegram bot
-    from app.services.telegram_bot import telegram_bot
-
-    await telegram_bot.start()
-
-    # Start trading service
-    from app.services.trading.trading_service import trading_service
-
-    await trading_service.startup()
-
-    # Start scheduler (recurring agent tasks)
-    from app.services.scheduler import scheduler
-
-    await scheduler.load_from_redis()
-
-    # Start health monitor
-    from app.services.health_monitor import health_monitor
-
-    await health_monitor.start()
-
-    # Start agent watchdog (detects stuck agents)
-    from app.services.agent_watchdog import agent_watchdog
-
-    await agent_watchdog.start()
-
-    # Load tool analytics from Redis
-    from app.services.tool_analytics import tool_analytics
-
-    tool_analytics.load_from_redis()
-
-    # Load Phase 2 services from Redis
-    from app.services.voting_service import voting_service
-    from app.services.delegation_service import delegation_service
-    from app.services.company_kpi_service import company_kpi_service
-
-    await voting_service.load_from_redis()
-    await delegation_service.load_from_redis()
-    await company_kpi_service.load_from_redis()
-    logger.info("Phase 2 services loaded (voting, delegation, KPIs)")
-
-    # Load Phase 3 services
-    from app.services.auto_trade_executor import auto_trade_executor
-    from app.services.portfolio_risk_manager import portfolio_risk_manager
-    from app.services.market_alerts import market_alert_service
-
-    await auto_trade_executor.load_from_redis()
-    await portfolio_risk_manager.load_from_redis()
-    await market_alert_service.load_from_redis()
-    await market_alert_service.start(interval_seconds=60)
-    logger.info("Phase 3 services loaded (auto-trade, risk manager, market alerts)")
-
-    # Load Phase 4 services
-    from app.services.prompt_optimizer import prompt_optimizer
-    from app.services.tool_usage_optimizer import tool_usage_optimizer
-    from app.services.error_pattern_detector import error_pattern_detector
-    from app.services.ab_testing_service import ab_testing_service
-
-    await prompt_optimizer.load_from_redis()
-    await tool_usage_optimizer.load_from_redis()
-    await error_pattern_detector.load_from_redis()
-    await ab_testing_service.load_from_redis()
-    logger.info("Phase 4 services loaded (prompt optimizer, tool optimizer, error detector, A/B testing)")
-
-    # Load Phase 5 services
-    from app.services.tiered_approval import tiered_approval_service
-    from app.services.accountability_report import accountability_report_service
-    from app.services.rollback_service import rollback_service
-    from app.services.multi_owner import multi_owner_service
-
-    await tiered_approval_service.load_from_redis()
-    await accountability_report_service.load_from_redis()
-    await rollback_service.load_from_redis()
-    await multi_owner_service.load_from_redis()
-    logger.info("Phase 5 services loaded (tiered approval, accountability, rollback, multi-owner)")
-
-    # Schedule recurring background tasks
     async def _approval_expiry_loop():
-        """Expire stale approvals every hour."""
         from app.services.approval_service import expire_old_approvals
         while True:
             try:
-                await asyncio.sleep(3600)  # every hour
+                await asyncio.sleep(3600)
                 count = await expire_old_approvals()
                 if count:
                     logger.info(f"Expired {count} stale approval(s)")
@@ -248,23 +127,21 @@ async def lifespan(app: FastAPI):
                 logger.error(f"Approval expiry task error: {e}")
 
     async def _daily_cost_reset_loop():
-        """Reset daily cost counters and budget enforcement at midnight UTC."""
         from datetime import datetime, timezone, timedelta
+        from app.services.cost_tracker import cost_tracker
         while True:
             try:
                 now = datetime.now(timezone.utc)
                 tomorrow = (now + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
-                seconds_until_midnight = (tomorrow - now).total_seconds()
-                await asyncio.sleep(seconds_until_midnight)
+                await asyncio.sleep((tomorrow - now).total_seconds())
                 cost_tracker.reset_daily()
-                # Also reset budget enforcer daily state
                 from app.services.budget_enforcer import budget_enforcer
                 budget_enforcer.reset_daily()
-                # Also reset auto-trade daily counters
                 from app.services.auto_trade_executor import auto_trade_executor as _ate
                 _ate.reset_daily()
-                # Phase 4: daily error scan and prompt snapshots
                 try:
+                    from app.services.error_pattern_detector import error_pattern_detector
+                    from app.services.prompt_optimizer import prompt_optimizer
                     await error_pattern_detector.scan_audit_log()
                     await error_pattern_detector.save_to_redis()
                     await prompt_optimizer.capture_all_snapshots()
@@ -277,62 +154,21 @@ async def lifespan(app: FastAPI):
                 logger.error(f"Daily cost reset error: {e}")
 
     async def _ceo_event_reactor():
-        """Background loop: CEO reacts to critical system events."""
         from app.services.event_bus import event_bus
-
         subscriber = event_bus.subscribe("dashboard")
         try:
             while True:
                 event = await subscriber.get()
                 event_type = event.get("event", "")
                 data = event.get("data", {})
-
-                # React to important events
-                if event_type not in (
-                    "agent_stuck", "task_failed", "agent_report", "task_completed"
-                ):
+                if event_type not in ("agent_stuck", "task_failed", "agent_report", "task_completed"):
                     continue
-
-                # Don't react to CEO's own events to avoid loops
                 if data.get("agent_id") == "ceo":
                     continue
-
                 try:
-                    if event_type == "agent_stuck":
-                        prompt = (
-                            f"[SYSTEM ALERT] Agent {data.get('agent_id')} is stuck in "
-                            f"{data.get('status')} state for {data.get('stuck_seconds')}s. "
-                            f"Use check_agent_health, restart the agent if needed, and report the issue."
-                        )
-                    elif event_type == "task_failed":
-                        prompt = (
-                            f"[SYSTEM ALERT] Task {data.get('task_id', 'unknown')} failed "
-                            f"for agent {data.get('agent_id', 'unknown')}. "
-                            f"Error: {str(data.get('error', ''))[:300]}. "
-                            f"Check what happened and take corrective action."
-                        )
-                    elif event_type == "agent_report":
-                        priority = data.get("priority", "medium")
-                        # Only auto-react to high/critical priority reports
-                        if priority not in ("high", "critical"):
-                            continue
-                        prompt = (
-                            f"[AGENT REPORT — {priority.upper()}] "
-                            f"Agent {data.get('agent_name', data.get('agent_id', 'unknown'))} "
-                            f"reports: \"{data.get('title', 'No title')}\" — "
-                            f"{str(data.get('content', ''))[:500]}. "
-                            f"Review and take action if needed."
-                        )
-                    elif event_type == "task_completed":
-                        prompt = (
-                            f"[TASK COMPLETED] Task {data.get('task_id', 'unknown')} "
-                            f"completed by agent {data.get('agent_name', data.get('agent_id', 'unknown'))}. "
-                            f"Result preview: {str(data.get('result', ''))[:300]}. "
-                            f"Determine if any follow-up action is needed."
-                        )
-                    else:
+                    prompt = _build_ceo_event_prompt(event_type, data)
+                    if not prompt:
                         continue
-
                     logger.info(f"CEO reacting to {event_type}: {prompt[:100]}...")
                     await asyncio.wait_for(ceo.run(prompt), timeout=120)
                 except asyncio.TimeoutError:
@@ -343,8 +179,7 @@ async def lifespan(app: FastAPI):
             pass
 
     async def _ceo_proactive_loop():
-        """CEO proactively checks operations every 2 hours."""
-        await asyncio.sleep(120)  # let startup settle
+        await asyncio.sleep(120)
         while True:
             try:
                 prompt = (
@@ -364,11 +199,10 @@ async def lifespan(app: FastAPI):
                 break
             except Exception as e:
                 logger.error(f"CEO proactive loop error: {e}")
-            await asyncio.sleep(7200)  # every 2 hours
+            await asyncio.sleep(7200)
 
     async def _ceo_startup_review():
-        """One-time: CEO reviews all companies/agents after startup (with delay)."""
-        await asyncio.sleep(30)  # Let everything settle first
+        await asyncio.sleep(30)
         if company_count > 0 or agent_count > 0:
             try:
                 prompt = (
@@ -387,10 +221,8 @@ async def lifespan(app: FastAPI):
             except Exception as e:
                 logger.error(f"CEO startup review failed: {e}")
 
-    # --- CEO Self-Scheduling (auto-create essential recurring tasks) ---
     async def _ceo_bootstrap_schedules():
-        """Bootstrap CEO's auto-schedules after startup settles."""
-        await asyncio.sleep(15)  # let scheduler load from Redis first
+        await asyncio.sleep(15)
         try:
             from app.services.ceo_self_scheduler import bootstrap_ceo_schedules
             result = await bootstrap_ceo_schedules()
@@ -401,9 +233,7 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"CEO self-scheduler failed: {e}")
 
-    # --- Daily Intelligence Report loop ---
     async def _daily_report_loop():
-        """Run the daily report at configured UTC hour."""
         try:
             from app.services.ceo_self_scheduler import setup_daily_report_schedule
             await setup_daily_report_schedule()
@@ -412,7 +242,88 @@ async def lifespan(app: FastAPI):
         except Exception as e:
             logger.error(f"Daily report loop failed: {e}")
 
-    _bg_tasks = [
+    async def _trade_monitor_loop():
+        """Periodically check open trades against SL/TP levels and expire stale signals."""
+        await asyncio.sleep(60)  # Wait for services to initialize
+        while True:
+            try:
+                from app.services.trading.trading_service import trading_service
+                if trading_service.is_connected:
+                    closed = await trading_service.check_open_trades()
+                    if closed:
+                        logger.info(f"Trade monitor auto-closed {len(closed)} trade(s): {closed}")
+                    expired = await trading_service.expire_stale_signals()
+                    if expired:
+                        logger.info(f"Trade monitor expired {expired} stale signal(s)")
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"Trade monitor error: {e}")
+            await asyncio.sleep(30)  # Check every 30 seconds
+
+    async def _signal_review_reactor():
+        """Event-driven: when a new signal needs review, immediately trigger the
+        Risk Manager agent instead of waiting for its next scheduled interval.
+
+        This eliminates the 15-45 minute gap where a signal sits idle.
+        """
+        from app.services.event_bus import event_bus
+        subscriber = event_bus.subscribe("dashboard")
+        try:
+            while True:
+                event = await subscriber.get()
+                if event.get("event") != "signal_needs_review":
+                    continue
+
+                data = event.get("data", {})
+                signal_id = data.get("signal_id")
+                symbol = data.get("symbol", "?")
+                direction = data.get("direction", "?")
+                confidence = data.get("confidence", 0)
+
+                # Find risk_manager agents in the registry
+                risk_managers = [
+                    a for a in registry.get_all()
+                    if getattr(a, "role", "") == "risk_manager"
+                ]
+                if not risk_managers:
+                    logger.warning(f"Signal {signal_id} needs review but no risk_manager agents found")
+                    continue
+
+                prompt = (
+                    f"[URGENT SIGNAL REVIEW] A new trade signal was just created and needs your "
+                    f"immediate review:\n"
+                    f"  Signal ID: {signal_id}\n"
+                    f"  Symbol: {symbol}\n"
+                    f"  Direction: {direction}\n"
+                    f"  Confidence: {confidence}\n"
+                    f"  Entry: {data.get('entry_price')}\n"
+                    f"  SL: {data.get('stop_loss')} | TP: {data.get('take_profit')}\n"
+                    f"  Reasoning: {data.get('reasoning', 'N/A')}\n\n"
+                    f"This signal expires in {5} minutes. Act NOW:\n"
+                    f"1. If the signal looks good (R:R >= 1.5, reasonable SL/TP), approve it immediately "
+                    f"with approve_signal.\n"
+                    f"2. If it's weak, reject it with reject_signal and provide reason.\n"
+                    f"Do NOT delay — the price is moving."
+                )
+
+                for rm in risk_managers:
+                    try:
+                        logger.info(
+                            f"Triggering {rm.name} for immediate signal review: "
+                            f"{symbol} {direction} (conf={confidence})"
+                        )
+                        await asyncio.wait_for(rm.run(prompt), timeout=90)
+                    except asyncio.TimeoutError:
+                        logger.warning(f"Risk Manager {rm.name} timed out reviewing signal {signal_id}")
+                    except Exception as e:
+                        logger.error(f"Risk Manager {rm.name} failed to review signal: {e}")
+        except asyncio.CancelledError:
+            pass
+        finally:
+            event_bus.unsubscribe("dashboard", subscriber)
+
+    return [
         asyncio.create_task(_approval_expiry_loop(), name="approval_expiry"),
         asyncio.create_task(_daily_cost_reset_loop(), name="daily_cost_reset"),
         asyncio.create_task(_ceo_event_reactor(), name="ceo_event_reactor"),
@@ -420,12 +331,53 @@ async def lifespan(app: FastAPI):
         asyncio.create_task(_ceo_startup_review(), name="ceo_startup_review"),
         asyncio.create_task(_ceo_bootstrap_schedules(), name="ceo_bootstrap_schedules"),
         asyncio.create_task(_daily_report_loop(), name="daily_report_loop"),
+        asyncio.create_task(_trade_monitor_loop(), name="trade_monitor"),
+        asyncio.create_task(_signal_review_reactor(), name="signal_review_reactor"),
     ]
 
-    # Wire budget alerts → Telegram
-    from app.services.cost_tracker import cost_tracker
 
-    # Load persisted cost data from Redis
+def _build_ceo_event_prompt(event_type: str, data: dict) -> str | None:
+    """Build a CEO prompt for a system event."""
+    if event_type == "agent_stuck":
+        return (
+            f"[SYSTEM ALERT] Agent {data.get('agent_id')} is stuck in "
+            f"{data.get('status')} state for {data.get('stuck_seconds')}s. "
+            f"Use check_agent_health, restart the agent if needed, and report the issue."
+        )
+    if event_type == "task_failed":
+        return (
+            f"[SYSTEM ALERT] Task {data.get('task_id', 'unknown')} failed "
+            f"for agent {data.get('agent_id', 'unknown')}. "
+            f"Error: {str(data.get('error', ''))[:300]}. "
+            f"Check what happened and take corrective action."
+        )
+    if event_type == "agent_report":
+        priority = data.get("priority", "medium")
+        if priority not in ("high", "critical"):
+            return None
+        return (
+            f"[AGENT REPORT — {priority.upper()}] "
+            f"Agent {data.get('agent_name', data.get('agent_id', 'unknown'))} "
+            f"reports: \"{data.get('title', 'No title')}\" — "
+            f"{str(data.get('content', ''))[:500]}. "
+            f"Review and take action if needed."
+        )
+    if event_type == "task_completed":
+        return (
+            f"[TASK COMPLETED] Task {data.get('task_id', 'unknown')} "
+            f"completed by agent {data.get('agent_name', data.get('agent_id', 'unknown'))}. "
+            f"Result preview: {str(data.get('result', ''))[:300]}. "
+            f"Determine if any follow-up action is needed."
+        )
+    return None
+
+
+async def _wire_budget_alerts(ceo):
+    """Wire cost tracker and budget enforcer alerts to Telegram + CEO."""
+    from app.services.cost_tracker import cost_tracker
+    from app.services.telegram_bot import telegram_bot
+    from app.services.budget_enforcer import budget_enforcer
+
     await cost_tracker._load_from_redis()
 
     async def _budget_alert(current: float, budget: float):
@@ -445,13 +397,9 @@ async def lifespan(app: FastAPI):
 
     cost_tracker.on_budget_alert(_budget_alert)
 
-    # Wire budget enforcer → Telegram + CEO notifications
-    from app.services.budget_enforcer import budget_enforcer
-
     await budget_enforcer._ensure_loaded()
 
     async def _budget_enforced(entity_id: str, reason: str):
-        """Notify owner and CEO when an agent/company is paused for budget."""
         try:
             if telegram_bot._running and telegram_bot._app and settings.telegram_owner_chat_id:
                 from telegram.constants import ParseMode
@@ -463,7 +411,6 @@ async def lifespan(app: FastAPI):
                 )
         except Exception as e:
             logger.warning(f"Failed to send budget enforcement alert: {e}")
-        # Also notify CEO so it can take action
         try:
             prompt = (
                 f"[BUDGET ENFORCEMENT] {reason}\n"
@@ -490,71 +437,6 @@ async def lifespan(app: FastAPI):
 
     event_bus.broadcast = _broadcast_with_telegram  # type: ignore[assignment]
 
-    # Start nginx reverse proxy + Cloudflare tunnel
-    from app.services.cloudflare_tunnel import cloudflare_tunnel
-
-    nginx_conf = Path(__file__).resolve().parents[2] / "nginx" / "ai-holding.conf"
-    if nginx_conf.exists():
-        import subprocess
-        # Symlink our config and restart nginx
-        target = Path("/etc/nginx/sites-enabled/ai-holding.conf")
-        if not target.exists():
-            subprocess.run(
-                ["sudo", "ln", "-sf", str(nginx_conf), str(target)],
-                check=False,
-            )
-            subprocess.run(
-                ["sudo", "rm", "-f", "/etc/nginx/sites-enabled/default"],
-                check=False,
-            )
-            subprocess.run(["sudo", "nginx", "-t"], check=False)
-            subprocess.run(["sudo", "systemctl", "restart", "nginx"], check=False)
-            logger.info("Nginx reverse proxy configured on port 8080")
-
-    tunnel_url = await cloudflare_tunnel.start(port=8080)
-    if tunnel_url:
-        logger.info(f"Dashboard available at: {tunnel_url}")
-        # Notify owner via Telegram
-        try:
-            _settings = get_settings()
-            if telegram_bot._running and telegram_bot._app and _settings.telegram_owner_chat_id:
-                from telegram.constants import ParseMode
-                await telegram_bot._app.bot.send_message(
-                    chat_id=int(_settings.telegram_owner_chat_id),
-                    text=f"🌐 <b>AI Holding Online</b>\n\n"
-                         f"Dashboard: {tunnel_url}\n"
-                         f"Agents: {registry.count} active\n\n"
-                         f"Use /web to get this link anytime.",
-                    parse_mode=ParseMode.HTML,
-                )
-        except Exception as e:
-            logger.warning(f"Failed to send tunnel URL to Telegram: {e}")
-
-    yield
-
-    # Shutdown
-    logger.info("=== AI Holding Shutting Down ===")
-    # Cancel background tasks
-    for t in _bg_tasks:
-        t.cancel()
-    await market_alert_service.stop()
-    await agent_watchdog.stop()
-    await health_monitor.stop()
-    await scheduler.stop_all()
-    await cloudflare_tunnel.stop()
-    await telegram_bot.stop()
-    await trading_service.shutdown()
-    await registry.stop_all()
-    await plugin_registry.shutdown_all()
-    await skill_registry.shutdown_all()
-
-    # Shutdown browser service if it was used
-    try:
-        from app.services.browser_service import browser_service
-        await browser_service.shutdown()
-    except Exception:
-        pass
-
 
 app = FastAPI(
     title="AI Holding",
@@ -562,6 +444,12 @@ app = FastAPI(
     version="0.1.0",
     lifespan=lifespan,
 )
+
+# Rate limiting — 60 requests/minute per IP across all endpoints
+limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 
 # CORS — allow dashboard frontend (local + tunnel)
 app.add_middleware(
@@ -597,4 +485,30 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "ok"}
+    """Detailed health check — verifies DB, Redis, and agent status."""
+    checks: dict = {"status": "ok"}
+
+    # Database
+    try:
+        from app.db.database import async_session
+        async with async_session() as session:
+            await session.execute(sa_text("SELECT 1"))
+        checks["database"] = "ok"
+    except Exception as e:
+        checks["database"] = f"error: {e}"
+        checks["status"] = "degraded"
+
+    # Redis
+    try:
+        from app.db.database import redis_pool
+        await redis_pool.ping()
+        checks["redis"] = "ok"
+    except Exception as e:
+        checks["redis"] = f"error: {e}"
+        checks["status"] = "degraded"
+
+    # Agents
+    checks["agents_total"] = registry.count
+    checks["agents_active"] = registry.active_count
+
+    return checks

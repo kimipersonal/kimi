@@ -7,10 +7,8 @@ workspace files by adding type, format, and provenance information.
 
 import json
 import logging
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
-from pathlib import Path
 from uuid import uuid4
 
 from app.services.workspace import get_workspace_path

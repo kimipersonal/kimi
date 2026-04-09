@@ -4,9 +4,9 @@ Tracks per-agent: task completions, failures, avg response time, cost efficiency
 Persists to Redis.
 """
 
+from app.db.database import redis_pool
 import json
 import logging
-import time
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -26,11 +26,7 @@ class PerformanceTracker:
             return
         self._loaded = True
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if raw:
                 self._data = json.loads(raw)
                 logger.info(f"Loaded performance data for {len(self._data)} agents")
@@ -39,11 +35,7 @@ class PerformanceTracker:
 
     async def _persist(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            await r.set(_REDIS_KEY, json.dumps(self._data), ex=86400 * 30)
-            await r.aclose()
+            await redis_pool.set(_REDIS_KEY, json.dumps(self._data), ex=86400 * 30)
         except Exception as e:
             logger.debug(f"Could not persist performance data: {e}")
 

@@ -5,12 +5,13 @@ configurable safety criteria (high confidence, proper SL/TP, within
 risk limits). Signals that don't qualify are left for manual review.
 """
 
-import asyncio
 import json
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
+
+from app.db.database import redis_pool
 
 logger = logging.getLogger(__name__)
 
@@ -118,9 +119,6 @@ class AutoTradeExecutor:
 
     async def save_to_redis(self):
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
             data = {
                 "config": self.config.to_dict(),
                 "daily": {
@@ -131,18 +129,13 @@ class AutoTradeExecutor:
                     "rejection_reasons": self._daily.rejection_reasons,
                 },
             }
-            await r.set(self._REDIS_KEY, json.dumps(data), ex=86400 * 7)
-            await r.aclose()
+            await redis_pool.set(self._REDIS_KEY, json.dumps(data), ex=86400 * 7)
         except Exception as e:
             logger.debug(f"Could not save auto-trade state: {e}")
 
     async def load_from_redis(self):
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(self._REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(self._REDIS_KEY)
             if raw:
                 data = json.loads(raw)
                 cfg = data.get("config", {})
@@ -285,6 +278,12 @@ class AutoTradeExecutor:
         try:
             from app.services.trading.trading_service import trading_service
             if trading_service.is_connected:
+                # Check if there's a connector that can actually trade this symbol
+                try:
+                    trading_service._find_connector(symbol)
+                except RuntimeError:
+                    reasons.append(f"No trading platform available for {symbol}")
+
                 positions = await trading_service.get_positions()
                 if len(positions) >= self.config.max_open_positions:
                     reasons.append(

@@ -5,7 +5,6 @@ later using task IDs. Tasks run in background asyncio tasks.
 """
 
 import asyncio
-import json
 import logging
 import time
 from dataclasses import dataclass, field

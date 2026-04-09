@@ -5,6 +5,8 @@ import { useWS } from '@/hooks/WSContext'
 import { api } from '@/lib/api'
 import type { Agent, Company } from '@/lib/api'
 import { PixelRoom } from './PixelRoom'
+import { parseActivityEvent } from './AgentActivityPanel'
+import type { ActivityEntry } from './AgentActivityPanel'
 import './pixel-office.css'
 
 /** Map company type → icon */
@@ -29,7 +31,9 @@ export function PixelOffice() {
   const [agents, setAgents] = useState<Agent[]>([])
   const [companies, setCompanies] = useState<Company[]>([])
   const [speeches, setSpeeches] = useState<SpeechBubble[]>([])
+  const [agentActivities, setAgentActivities] = useState<Record<string, ActivityEntry[]>>({})
   const bubbleIdRef = useRef(0)
+  const activityIdRef = useRef(0)
 
   const fetchData = useCallback(async () => {
     try { setAgents(await api.getAgents()) } catch { /* retry on next event */ }
@@ -67,6 +71,18 @@ export function PixelOffice() {
       setTimeout(() => {
         setSpeeches(prev => prev.filter(s => s.id !== id))
       }, 3000)
+
+      // Track activity entries per agent
+      const entry = parseActivityEvent(
+        { data: last.data as Record<string, unknown>, timestamp: last.timestamp },
+        ++activityIdRef.current
+      )
+      if (entry && last.agent_id) {
+        setAgentActivities(prev => {
+          const existing = prev[last.agent_id!] || []
+          return { ...prev, [last.agent_id!]: [...existing.slice(-29), entry] }
+        })
+      }
     }
   }, [events, fetchData])
 
@@ -133,6 +149,7 @@ export function PixelOffice() {
             isCeo
             agents={[ceoAgent]}
             icon="👑"
+            agentActivities={agentActivities}
           />
         )}
 
@@ -145,6 +162,7 @@ export function PixelOffice() {
                 label={company.name}
                 agents={companyAgents}
                 icon={companyIcon(company.type)}
+                agentActivities={agentActivities}
               />
             ))}
           </div>
@@ -156,6 +174,7 @@ export function PixelOffice() {
             label="Lobby"
             agents={unassigned}
             icon="🚪"
+            agentActivities={agentActivities}
           />
         )}
       </div>

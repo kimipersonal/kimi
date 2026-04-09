@@ -65,6 +65,20 @@ export default function AgentDetailPage() {
     }
   }
 
+  const handleChatSendStream = async (
+    message: string,
+    onStep: (step: import('@/lib/api').StreamStep) => void,
+  ): Promise<string> => {
+    setChatLoading(true)
+    try {
+      const result = await api.chatWithAgentStream(agentId, message, onStep)
+      await refresh()
+      return result
+    } finally {
+      setChatLoading(false)
+    }
+  }
+
   if (error) {
     return (
       <div className="space-y-4 max-w-6xl">
@@ -180,7 +194,9 @@ export default function AgentDetailPage() {
           agentId={agentId}
           agentName={agent.name}
           onSend={handleChatSend}
+          onSendStream={handleChatSendStream}
           loading={chatLoading}
+          initialMessages={agent.conversations}
         />
         {/* Agent-specific activity log */}
         <div className="rounded-lg border border-[var(--border)] bg-[var(--bg-card)] flex flex-col">

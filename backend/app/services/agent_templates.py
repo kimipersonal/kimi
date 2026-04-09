@@ -4,9 +4,9 @@ Templates are stored in Redis and can be used by the CEO to quickly
 hire agents with pre-defined roles, instructions, and model settings.
 """
 
+from app.db.database import redis_pool
 import json
 import logging
-import time
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
@@ -26,11 +26,7 @@ class AgentTemplateStore:
             return
         self._loaded = True
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if raw:
                 self._templates = json.loads(raw)
                 logger.info(f"Loaded {len(self._templates)} agent templates from Redis")
@@ -39,11 +35,7 @@ class AgentTemplateStore:
 
     async def _persist(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            await r.set(_REDIS_KEY, json.dumps(self._templates))
-            await r.aclose()
+            await redis_pool.set(_REDIS_KEY, json.dumps(self._templates))
         except Exception as e:
             logger.debug(f"Could not persist agent templates: {e}")
 

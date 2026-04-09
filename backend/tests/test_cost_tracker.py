@@ -67,7 +67,7 @@ class TestCostTracker:
     @pytest.mark.asyncio
     async def test_overview(self, tracker):
         await tracker.record("agent-1", "gemini-2.5-flash", 1000, 500)
-        overview = tracker.get_overview()
+        overview = await tracker.get_overview()
         assert overview["total_calls"] >= 1
         assert overview["total_cost_usd"] > 0
         assert "agents" in overview

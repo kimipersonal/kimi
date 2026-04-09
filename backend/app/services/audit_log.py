@@ -4,6 +4,7 @@ Stores entries in Redis with optional DB persistence. Each entry captures
 who did what, when, and the result.
 """
 
+from app.db.database import redis_pool
 import json
 import logging
 import time
@@ -43,11 +44,7 @@ class AuditLog:
             return
         self._loaded = True
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if raw:
                 entries = json.loads(raw)
                 for e in entries[-_MAX_IN_MEMORY:]:
@@ -104,12 +101,8 @@ class AuditLog:
     async def _persist(self) -> None:
         """Save entries to Redis."""
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
             data = list(self._entries)[-_MAX_REDIS_ENTRIES:]
-            await r.set(_REDIS_KEY, json.dumps(data), ex=86400 * 30)  # 30 day TTL
-            await r.aclose()
+            await redis_pool.set(_REDIS_KEY, json.dumps(data), ex=86400 * 30)  # 30 day TTL
         except Exception as e:
             logger.debug(f"Could not persist audit log: {e}")
 

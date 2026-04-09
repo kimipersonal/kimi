@@ -8,13 +8,13 @@ agents that don't respond in time are marked as abstained.
 import asyncio
 import json
 import logging
-import time
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from enum import Enum
 from uuid import uuid4
 
 from app.services.event_bus import event_bus
+from app.db.database import redis_pool
 
 logger = logging.getLogger(__name__)
 
@@ -268,25 +268,17 @@ class VotingService:
     async def persist_to_redis(self) -> None:
         """Persist vote history to Redis."""
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
             data = {vid: s.to_dict() for vid, s in self._sessions.items()}
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            await r.set(_REDIS_KEY, json.dumps(data), ex=86400 * 7)
-            await r.aclose()
+            await redis_pool.set(_REDIS_KEY, json.dumps(data), ex=86400 * 7)
         except Exception as e:
             logger.debug(f"Could not persist voting data: {e}")
 
     async def load_from_redis(self) -> None:
         """Load completed vote history from Redis (does not restore open sessions)."""
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if not raw:
                 return
             data = json.loads(raw)

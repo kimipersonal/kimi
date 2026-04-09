@@ -3,6 +3,7 @@
 Uses a sliding window counter in Redis for distributed rate limiting.
 """
 
+from app.db.database import redis_pool
 import logging
 import time
 
@@ -37,14 +38,11 @@ class RateLimiter:
             return self._check_memory(agent_id)
 
     async def _check_redis(self, agent_id: str) -> tuple[bool, str]:
-        import redis.asyncio as aioredis
-        from app.config import get_settings
 
         now = time.time()
         window_start = now - _WINDOW_SECONDS
-        r = aioredis.from_url(get_settings().redis_url)
 
-        pipe = r.pipeline()
+        pipe = redis_pool.pipeline()
 
         # Global key
         gkey = "ratelimit:global"
@@ -61,7 +59,6 @@ class RateLimiter:
         pipe.expire(akey, _WINDOW_SECONDS * 2)
 
         results = await pipe.execute()
-        await r.aclose()
 
         global_count = results[1]  # zcard result for global
         agent_count = results[5]   # zcard result for agent
@@ -96,21 +93,17 @@ class RateLimiter:
     async def get_status(self, agent_id: str | None = None) -> dict:
         """Get current rate limit status."""
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
             now = time.time()
             window_start = now - _WINDOW_SECONDS
-            r = aioredis.from_url(get_settings().redis_url)
 
-            pipe = r.pipeline()
+            pipe = redis_pool.pipeline()
             pipe.zremrangebyscore("ratelimit:global", 0, window_start)
             pipe.zcard("ratelimit:global")
             if agent_id:
                 pipe.zremrangebyscore(f"ratelimit:agent:{agent_id}", 0, window_start)
                 pipe.zcard(f"ratelimit:agent:{agent_id}")
             results = await pipe.execute()
-            await r.aclose()
 
             status = {
                 "global_rpm_used": results[1],

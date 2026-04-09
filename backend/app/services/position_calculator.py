@@ -141,9 +141,6 @@ class PositionCalculator:
         risk_amount: float, risk_pct: float, equity: float,
     ) -> SizingResult:
         """Calculate forex position size in lots."""
-        pip_size = _get_pip_size(symbol)
-        sl_pips = sl_dist / pip_size
-
         # Position size in units: risk_amount / (pips * pip_value_per_unit)
         # For most pairs, pip_value per unit ≈ pip_size
         # Simplified: size = risk_amount / (sl_distance)
@@ -162,8 +159,6 @@ class PositionCalculator:
         else:
             lot_type = "micro"
             display_size = round(size_lots, 4)
-
-        max_loss = sl_pips * pip_size * size_units
 
         return SizingResult(
             symbol=symbol,

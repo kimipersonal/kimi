@@ -10,6 +10,7 @@ On first boot (or when schedules are empty), the CEO automatically creates:
 Uses a Redis flag to avoid re-creating schedules on every restart.
 """
 
+from app.db.database import redis_pool
 import asyncio
 import logging
 from datetime import datetime, timezone
@@ -69,12 +70,8 @@ async def bootstrap_ceo_schedules(force: bool = False) -> dict:
     # Check if already bootstrapped
     if not force:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            already = await r.get(_REDIS_BOOTSTRAP_KEY)
-            await r.aclose()
+            already = await redis_pool.get(_REDIS_BOOTSTRAP_KEY)
             if already:
                 logger.info("CEO schedules already bootstrapped, skipping")
                 return {"created": [], "skipped": True}
@@ -107,15 +104,11 @@ async def bootstrap_ceo_schedules(force: bool = False) -> dict:
 
     # Mark as bootstrapped
     try:
-        import redis.asyncio as aioredis
-        from app.config import get_settings
 
-        r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-        await r.set(
+        await redis_pool.set(
             _REDIS_BOOTSTRAP_KEY,
             datetime.now(timezone.utc).isoformat(),
         )
-        await r.aclose()
     except Exception:
         pass
 

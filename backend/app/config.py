@@ -76,6 +76,13 @@ class Settings(BaseSettings):
     max_telegram_msg_len: int = 4000  # Telegram limit ~4096, leave headroom
     daily_report_hour: int = 9  # UTC hour for daily CEO report
 
+    # API Security
+    api_key: str = ""  # Required in production — protects all API endpoints
+    webhook_secret: str = ""  # HMAC secret for validating incoming webhooks
+
+    # Speech-to-Text backend: "gemini" (free, uses Vertex AI credits) or "chirp2" (paid, better quality)
+    stt_backend: str = "gemini"
+
     # Cost tracking
     daily_budget_usd: float = 5.0
     budget_alert_threshold: float = 0.8  # alert at 80% of budget

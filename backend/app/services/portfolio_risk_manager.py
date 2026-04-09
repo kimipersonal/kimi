@@ -5,10 +5,10 @@ and correlation between positions. Auto-alerts and can force-close positions
 when risk limits are breached.
 """
 
-import asyncio
+from app.db.database import redis_pool
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 
@@ -116,25 +116,17 @@ class PortfolioRiskManager:
 
     async def save_to_redis(self):
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
             data = {
                 "limits": self.limits.to_dict(),
                 "peak_equity": self._peak_equity,
             }
-            await r.set(self._REDIS_KEY, json.dumps(data), ex=86400 * 30)
-            await r.aclose()
+            await redis_pool.set(self._REDIS_KEY, json.dumps(data), ex=86400 * 30)
         except Exception as e:
             logger.debug(f"Could not save risk manager state: {e}")
 
     async def load_from_redis(self):
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(self._REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(self._REDIS_KEY)
             if raw:
                 data = json.loads(raw)
                 limits = data.get("limits", {})

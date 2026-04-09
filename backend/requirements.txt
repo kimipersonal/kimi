@@ -40,7 +40,16 @@ playwright>=1.40
 duckduckgo-search>=8.0
 feedparser>=6.0
 
+# PDF reports
+fpdf2>=2.8
+
+# Speech-to-Text (Chirp 2 — Uzbek/Russian/English)
+google-cloud-speech>=2.28
+
 # Testing
 pytest>=8.0
 pytest-asyncio>=0.23
 pytest-cov>=5.0
+
+# Rate Limiting
+slowapi>=0.1.9

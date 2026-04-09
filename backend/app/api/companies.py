@@ -1,8 +1,10 @@
 """Company API endpoints — manage companies via DB."""
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
-router = APIRouter(prefix="/api/companies", tags=["companies"])
+from app.api.auth import verify_api_key
+
+router = APIRouter(prefix="/api/companies", tags=["companies"], dependencies=[Depends(verify_api_key)])
 
 
 @router.get("")

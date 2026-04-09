@@ -10,6 +10,7 @@ Additional users in telegram_admin_chat_ids default to admin.
 Custom roles are stored in Redis.
 """
 
+from app.db.database import redis_pool
 import json
 import logging
 from enum import Enum
@@ -64,11 +65,7 @@ class PermissionManager:
             return
         self._loaded = True
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if raw:
                 self._roles = json.loads(raw)
         except Exception as e:
@@ -76,11 +73,7 @@ class PermissionManager:
 
     async def _persist(self) -> None:
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            await r.set(_REDIS_KEY, json.dumps(self._roles))
-            await r.aclose()
+            await redis_pool.set(_REDIS_KEY, json.dumps(self._roles))
         except Exception as e:
             logger.debug(f"Could not persist permissions: {e}")
 

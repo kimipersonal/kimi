@@ -6,14 +6,15 @@ import json
 import logging
 from datetime import datetime, timezone
 
-from fastapi import APIRouter, Header, HTTPException, Request
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from pydantic import BaseModel
 
+from app.api.auth import verify_webhook_secret
 from app.config import get_settings
 from app.services.event_bus import event_bus
 
 logger = logging.getLogger(__name__)
-router = APIRouter(prefix="/api/webhooks", tags=["webhooks"])
+router = APIRouter(prefix="/api/webhooks", tags=["webhooks"], dependencies=[Depends(verify_webhook_secret)])
 
 
 class WebhookPayload(BaseModel):

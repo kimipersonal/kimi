@@ -126,6 +126,45 @@ def _is_model_garden(model: str) -> bool:
     return "/" in model and not model.startswith("vertex_ai/") and not model.startswith("github/")
 
 
+def _sanitize_messages_for_gemini(messages: list[dict]) -> list[dict]:
+    """Remove OpenAI tool_calls format that native Gemini cannot process.
+
+    LiteLLM cannot convert OpenAI ``tool_calls`` on assistant messages to
+    Gemini's ``function_call`` format when those messages come from a prior
+    conversation with a different model (e.g. DeepSeek / Kimi K2).  Passing
+    such history to Gemini always raises:
+        "Unable to convert openai tool calls ... to gemini tool calls"
+
+    This function sanitises the history so Gemini receives a plain
+    user/assistant transcript. Tool-call details are dropped but the
+    surrounding text context is preserved so the model still has meaningful
+    history.
+
+    Rules applied:
+    * ``role: assistant`` with ``tool_calls`` present:
+        - Keep the text ``content`` (if any).
+        - Drop the ``tool_calls`` list.
+        - If there is no text content at all, skip the message entirely.
+    * ``role: tool`` (tool results):
+        - Convert to ``role: user`` with a short preamble so the model
+          understands it is a tool result.
+    """
+    sanitized: list[dict] = []
+    for msg in messages:
+        role = msg.get("role", "")
+        if role == "tool":
+            content = msg.get("content") or ""
+            sanitized.append({"role": "user", "content": f"[Tool result] {content}"})
+        elif role == "assistant" and msg.get("tool_calls"):
+            content = msg.get("content") or ""
+            if content:
+                sanitized.append({"role": "assistant", "content": content})
+            # Otherwise drop – the message is a pure tool-dispatch with no text
+        else:
+            sanitized.append(msg)
+    return sanitized
+
+
 def _is_github_model(model: str) -> bool:
     """Check if a model uses the GitHub Models API."""
     return model.startswith("github/")
@@ -170,13 +209,15 @@ def _build_kwargs(model: str, messages, temperature, max_tokens, tools) -> dict:
             "extra_headers": {"Authorization": f"Bearer {token}"},
         }
     else:
-        # Native Gemini model
+        # Native Gemini model — must sanitize OpenAI tool_calls format from history
+        # because LiteLLM cannot convert it to Gemini's function_call format and will
+        # raise "Unable to convert openai tool calls ... to gemini tool calls".
         litellm_model = (
             model if model.startswith("vertex_ai/") else f"vertex_ai/{model}"
         )
         kwargs = {
             "model": litellm_model,
-            "messages": messages,
+            "messages": _sanitize_messages_for_gemini(messages),
             "temperature": temperature,
             "max_tokens": max_tokens,
             "vertex_project": settings.gcp_project_id,

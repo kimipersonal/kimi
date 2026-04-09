@@ -116,6 +116,78 @@ ANALYST_TOOLS_SCHEMA: list[dict] = [
     {
         "type": "function",
         "function": {
+            "name": "advanced_analysis",
+            "description": (
+                "TradingView-grade deep analysis. Calculates EMA(9/21/55), SMA(200), "
+                "Stochastic RSI, MACD, ADX (trend strength), Ichimoku Cloud, Volume Profile, "
+                "Support/Resistance levels, and candlestick patterns (doji, hammer, engulfing). "
+                "Returns a weighted VERDICT (STRONG BUY / BUY / NEUTRAL / SELL / STRONG SELL) "
+                "with a score from -100 to +100. Use 4h or 1d interval for best results."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {"type": "string", "description": "Trading symbol"},
+                    "interval": {
+                        "type": "string",
+                        "enum": ["1h", "4h", "1d"],
+                        "description": "Analysis timeframe (default 4h). Use 4h for swing trades, 1d for position trades.",
+                    },
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "multi_technical_analysis",
+            "description": (
+                "Run technical analysis on MULTIPLE symbols in one call. "
+                "Use this instead of calling technical_analysis repeatedly. "
+                "Returns analysis for each symbol."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbols": {
+                        "type": "array",
+                        "items": {"type": "string"},
+                        "description": "List of symbols, e.g. ['BTCUSDT','ETHUSDT','EURUSD']",
+                    },
+                    "interval": {
+                        "type": "string",
+                        "enum": ["5m", "15m", "30m", "1h", "4h", "1d"],
+                        "description": "Analysis timeframe (default 1h)",
+                    },
+                },
+                "required": ["symbols"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "review_trade_history",
+            "description": (
+                "Review past trade performance: win rate, P&L, best/worst trades, "
+                "win/loss streaks, per-symbol breakdown, avg hold time, avg R:R achieved. "
+                "Use this BEFORE creating signals to learn from what worked and what didn't."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "Filter by symbol (optional, e.g. 'BTCUSDT'). Leave empty for all symbols.",
+                    },
+                },
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
             "name": "create_signal",
             "description": "Submit a trade signal recommendation for review by Risk Manager.",
             "parameters": {
@@ -248,13 +320,51 @@ RISK_MANAGER_TOOLS_SCHEMA: list[dict] = [
     },
 ]
 
+# Tools for trade management — shared by risk_manager and auto_trade_executor
+TRADE_MANAGEMENT_TOOLS: list[dict] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "close_trade",
+            "description": "Close an open trade by its trade ID. Sells the position on the exchange and records the exit.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "trade_id": {
+                        "type": "string",
+                        "description": "The trade ID to close (from get_open_trades)",
+                    },
+                },
+                "required": ["trade_id"],
+            },
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "get_open_trades",
+            "description": "Get all open trades from the database with their entry price, SL, TP, and current P&L status.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+    {
+        "type": "function",
+        "function": {
+            "name": "check_sl_tp",
+            "description": "Check all open trades against current market prices and auto-close any that hit stop-loss or take-profit levels. Returns list of closed trades.",
+            "parameters": {"type": "object", "properties": {}},
+        },
+    },
+]
+
 _ROLE_SCHEMAS: dict[str, list[dict]] = {
     "market_researcher": RESEARCHER_TOOLS_SCHEMA,
     "analyst": ANALYST_TOOLS_SCHEMA,
-    "risk_manager": RISK_MANAGER_TOOLS_SCHEMA,
+    "risk_manager": RISK_MANAGER_TOOLS_SCHEMA + TRADE_MANAGEMENT_TOOLS,
+    "auto_trade_executor": RISK_MANAGER_TOOLS_SCHEMA + TRADE_MANAGEMENT_TOOLS,
 }
 
-TRADING_ROLES = {"market_researcher", "analyst", "risk_manager"}
+TRADING_ROLES = {"market_researcher", "analyst", "risk_manager", "auto_trade_executor"}
 
 
 class TradingAgent(BaseAgent):
@@ -331,6 +441,18 @@ class TradingAgent(BaseAgent):
                         interval=arguments.get("interval", "1h"),
                         limit=arguments.get("limit", 100),
                     )
+                case "multi_technical_analysis":
+                    symbols = arguments.get("symbols", [])
+                    interval = arguments.get("interval", "1h")
+                    results = {}
+                    for sym in symbols[:6]:
+                        try:
+                            results[sym] = await trading_service.run_technical_analysis(
+                                symbol=sym, interval=interval, limit=100,
+                            )
+                        except Exception as e:
+                            results[sym] = {"error": str(e)[:200]}
+                    result = results
                 case "create_signal":
                     result = await trading_service.create_signal(
                         symbol=arguments["symbol"],
@@ -342,6 +464,15 @@ class TradingAgent(BaseAgent):
                         reasoning=arguments["reasoning"],
                         agent_id=self.agent_id,
                         company_id=self.company_id,
+                    )
+                case "advanced_analysis":
+                    result = await trading_service.run_advanced_analysis(
+                        symbol=arguments["symbol"],
+                        interval=arguments.get("interval", "4h"),
+                    )
+                case "review_trade_history":
+                    result = await trading_service.get_trade_performance(
+                        symbol=arguments.get("symbol"),
                     )
                 case "get_pending_signals":
                     result = await trading_service.get_signals(status="pending")
@@ -366,6 +497,17 @@ class TradingAgent(BaseAgent):
                         stop_loss_pips=arguments["stop_loss_pips"],
                         risk_percent=arguments.get("risk_percent", 1.0),
                     )
+                case "close_trade":
+                    result = await trading_service.close_trade(
+                        trade_id=arguments["trade_id"],
+                    )
+                case "get_open_trades":
+                    result = await trading_service.get_trade_history(limit=50)
+                    result = [t for t in result if t.get("status") == "open"]
+                case "check_sl_tp":
+                    result = await trading_service.check_open_trades()
+                    if not result:
+                        result = {"message": "No trades hit SL/TP levels"}
                 case _:
                     # Delegate to base class for sandbox/browser tools
                     return await super().execute_tool(tool_name, arguments)

@@ -116,6 +116,14 @@ class CircuitBreaker:
             "recovery_timeout_s": self._recovery_timeout,
         }
 
+    def reset(self) -> None:
+        """Forcibly reset the circuit to CLOSED state, clearing failure counts."""
+        self._state = CircuitState.CLOSED
+        self._failure_count = 0
+        self._half_open_calls = 0
+        self._last_failure_time = 0.0
+        logger.info(f"Circuit '{self.name}' manually reset → CLOSED")
+
 
 class CircuitOpenError(Exception):
     """Raised when a circuit breaker is open."""
@@ -144,6 +152,18 @@ class CircuitBreakerRegistry:
 
     def get_all_status(self) -> list[dict]:
         return [cb.get_status() for cb in self._breakers.values()]
+
+    def reset(self, name: str) -> bool:
+        """Reset a named circuit breaker back to CLOSED. Returns True if found."""
+        if name in self._breakers:
+            self._breakers[name].reset()
+            return True
+        return False
+
+    def reset_all(self) -> None:
+        """Reset every registered circuit breaker."""
+        for cb in self._breakers.values():
+            cb.reset()
 
 
 # Global singleton

@@ -4,10 +4,9 @@ When an agent exceeds its budget, it gets auto-paused. The CEO is notified.
 Budget config is stored in Redis so it survives restarts.
 """
 
-import asyncio
+from app.db.database import redis_pool
 import json
 import logging
-from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
 
@@ -38,12 +37,8 @@ class BudgetEnforcer:
             return
         self._loaded = True
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
-            raw = await r.get(_REDIS_KEY)
-            await r.aclose()
+            raw = await redis_pool.get(_REDIS_KEY)
             if raw:
                 data = json.loads(raw)
                 self._agent_budgets = data.get("agent_budgets", {})
@@ -57,16 +52,12 @@ class BudgetEnforcer:
 
     async def _persist(self):
         try:
-            import redis.asyncio as aioredis
-            from app.config import get_settings
 
-            r = aioredis.from_url(get_settings().redis_url, decode_responses=True)
             data = {
                 "agent_budgets": self._agent_budgets,
                 "company_budgets": self._company_budgets,
             }
-            await r.set(_REDIS_KEY, json.dumps(data))
-            await r.aclose()
+            await redis_pool.set(_REDIS_KEY, json.dumps(data))
         except Exception as e:
             logger.debug(f"Could not persist budget config: {e}")
 

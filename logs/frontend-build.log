@@ -17,20 +17,20 @@
    Collecting build traces ...
 
 Route (app)                              Size     First Load JS
-┌ ○ /                                    4.31 kB        96.3 kB
+┌ ○ /                                    4.75 kB        98.4 kB
 ├ ○ /_not-found                          873 B          88.1 kB
-├ ○ /agents                              3.54 kB        98.7 kB
-├ ƒ /agents/[id]                         2 kB             94 kB
-├ ○ /approvals                           4.97 kB        92.2 kB
-├ ○ /companies                           4.51 kB        91.7 kB
-├ ○ /logs                                3.8 kB           91 kB
-├ ○ /office                              4.43 kB        91.6 kB
-├ ○ /settings                            5.38 kB        92.6 kB
-├ ○ /skills                              5.01 kB        92.2 kB
-└ ○ /trading                             5.5 kB         92.7 kB
+├ ○ /agents                              3.62 kB        98.8 kB
+├ ƒ /agents/[id]                         6.38 kB        93.6 kB
+├ ○ /approvals                           5.06 kB        92.3 kB
+├ ○ /companies                           4.6 kB         91.8 kB
+├ ○ /logs                                3.89 kB        91.1 kB
+├ ○ /office                              392 B            94 kB
+├ ○ /settings                            6.67 kB        93.9 kB
+├ ○ /skills                              5.1 kB         92.3 kB
+└ ○ /trading                             7.23 kB        94.4 kB
 + First Load JS shared by all            87.2 kB
-  ├ chunks/117-bd580001aca458a3.js       31.6 kB
-  ├ chunks/fd9d1056-96becd60ffeba6a0.js  53.6 kB
+  ├ chunks/117-dfee4ea52c34f0fc.js       31.6 kB
+  ├ chunks/fd9d1056-40b89ee6a258ef49.js  53.6 kB
   └ other shared chunks (total)          1.96 kB
 
 
