@@ -386,15 +386,21 @@ async def _create_background_tasks(ceo, company_count: int, agent_count: int) ->
                         f"Use check_sl_tp first. Then use close_trade on trades you think need action."
                     )
                     rm = risk_managers[0]
+                    logger.info(
+                        f"Position review triggered — {len(open_trades)} open trade(s), "
+                        f"using {rm.name} (id={rm.id})"
+                    )
                     try:
                         await asyncio.wait_for(rm.run(prompt), timeout=120)
                     except (asyncio.TimeoutError, Exception) as e:
-                        logger.debug(f"Position review by {rm.name} issue: {e}")
+                        logger.info(f"Position review by {rm.name} issue: {e}")
+                else:
+                    logger.info("Position review: no risk_manager agents found — skipping")
 
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                logger.debug(f"Position review loop error: {e}")
+                logger.info(f"Position review loop error: {e}")
             await asyncio.sleep(600)  # Every 10 minutes
 
     async def _signal_review_reactor():

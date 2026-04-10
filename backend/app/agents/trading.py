@@ -566,6 +566,8 @@ class TradingAgent(BaseAgent):
                                                     _db_t.metadata_["original_stop_loss"] = _db_t.metadata_.get(
                                                         "original_stop_loss", old_sl
                                                     )
+                                                    from sqlalchemy.orm.attributes import flag_modified
+                                                    flag_modified(_db_t, "metadata_")
                                                     await _sess2.commit()
                                             result = {
                                                 "action": "sl_tightened",
@@ -593,6 +595,8 @@ class TradingAgent(BaseAgent):
                                                     _db_t.metadata_["original_stop_loss"] = _db_t.metadata_.get(
                                                         "original_stop_loss", old_sl
                                                     )
+                                                    from sqlalchemy.orm.attributes import flag_modified
+                                                    flag_modified(_db_t, "metadata_")
                                                     await _sess2.commit()
                                             result = {
                                                 "action": "sl_tightened",

@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone, timedelta
 
 from sqlalchemy import desc, select, and_
+from sqlalchemy.orm.attributes import flag_modified
 
 from app.db.database import async_session
 from app.db.models import ActivityLog, Agent, Trade, TradeSignal
@@ -1520,6 +1521,7 @@ class TradingService:
                                     db_t.metadata_["breakeven_active"] = True
                                     db_t.metadata_["highest_price"] = highest
                                     db_t.metadata_["lowest_price"] = lowest
+                                    flag_modified(db_t, "metadata_")
                                     await sess.commit()
                             trade.stop_loss = be_sl
                             meta["breakeven_active"] = True
@@ -1545,6 +1547,7 @@ class TradingService:
                                         db_t.metadata_["highest_price"] = highest
                                         db_t.metadata_["lowest_price"] = lowest
                                         db_t.metadata_["trailing_active"] = True
+                                        flag_modified(db_t, "metadata_")
                                         await sess.commit()
                                 trade.stop_loss = trail_sl
                                 logger.info(
@@ -1572,6 +1575,7 @@ class TradingService:
                                     db_t.metadata_["breakeven_active"] = True
                                     db_t.metadata_["highest_price"] = highest
                                     db_t.metadata_["lowest_price"] = lowest
+                                    flag_modified(db_t, "metadata_")
                                     await sess.commit()
                             trade.stop_loss = be_sl
                             meta["breakeven_active"] = True
@@ -1596,6 +1600,7 @@ class TradingService:
                                         db_t.metadata_["highest_price"] = highest
                                         db_t.metadata_["lowest_price"] = lowest
                                         db_t.metadata_["trailing_active"] = True
+                                        flag_modified(db_t, "metadata_")
                                         await sess.commit()
                                 trade.stop_loss = trail_sl
                                 logger.info(
@@ -1695,6 +1700,7 @@ class TradingService:
                                                 db_t.metadata_["initial_take_profit"] = initial_tp
                                                 db_t.metadata_["tp_ratcheted"] = True
                                                 db_t.metadata_["tp_ratchet_tier"] = tier_pct
+                                                flag_modified(db_t, "metadata_")
                                                 await sess.commit()
                                         trade.take_profit = new_tp
                                         logger.info(
@@ -1716,6 +1722,7 @@ class TradingService:
                                                 db_t.metadata_["initial_take_profit"] = initial_tp
                                                 db_t.metadata_["tp_ratcheted"] = True
                                                 db_t.metadata_["tp_ratchet_tier"] = tier_pct
+                                                flag_modified(db_t, "metadata_")
                                                 await sess.commit()
                                         trade.take_profit = new_tp
                                         logger.info(
@@ -1812,6 +1819,7 @@ class TradingService:
                                     db_t.metadata_ = {}
                                 db_t.metadata_["close_reason"] = close_reason
                                 db_t.metadata_["close_price"] = current_price
+                                flag_modified(db_t, "metadata_")
                                 await sess.commit()
                         closed.append(result)
                     except Exception as e:
