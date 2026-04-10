@@ -261,6 +261,142 @@ async def _create_background_tasks(ceo, company_count: int, agent_count: int) ->
                 logger.debug(f"Trade monitor error: {e}")
             await asyncio.sleep(30)  # Check every 30 seconds
 
+    async def _position_review_loop():
+        """Periodically trigger risk managers to review open positions.
+
+        Uses historical TP achievement data per symbol so the agent can
+        make realistic exit decisions instead of blindly waiting for TP.
+        """
+        await asyncio.sleep(120)  # Wait for services
+        while True:
+            try:
+                from app.services.trading.trading_service import trading_service
+                if not trading_service.is_connected:
+                    await asyncio.sleep(300)
+                    continue
+
+                # Get open trades
+                history = await trading_service.get_trade_history(limit=50)
+                open_trades = [t for t in history if t.get("status") == "open"]
+                if not open_trades:
+                    await asyncio.sleep(600)
+                    continue
+
+                # Gather historical TP profiles for each symbol in play
+                symbols_in_play = set(t["symbol"] for t in open_trades)
+                tp_profiles: dict[str, dict] = {}
+                for sym in symbols_in_play:
+                    try:
+                        tp_profiles[sym] = await trading_service._get_tp_profile_cached(sym)
+                    except Exception:
+                        tp_profiles[sym] = {"sufficient_data": False}
+
+                # Build a rich summary for the risk manager
+                positions_summary = []
+                for t in open_trades:
+                    try:
+                        prices = await trading_service.get_prices([t["symbol"]])
+                        curr = prices[0].get("last", 0) if prices else 0
+                        entry = t.get("entry_price", 0)
+                        size = t.get("size", 0)
+                        if not (entry and curr and size):
+                            continue
+
+                        if t.get("side") == "buy":
+                            pnl = (curr - entry) * size
+                            pnl_pct = (curr - entry) / entry * 100
+                        else:
+                            pnl = (entry - curr) * size
+                            pnl_pct = (entry - curr) / entry * 100
+
+                        # Compute TP progress
+                        tp = t.get("take_profit")
+                        tp_note = ""
+                        if tp and entry:
+                            tp_dist = abs(tp - entry)
+                            if t.get("side") == "buy":
+                                curr_move = max(0, curr - entry)
+                            else:
+                                curr_move = max(0, entry - curr)
+                            tp_progress = (curr_move / tp_dist * 100) if tp_dist > 0 else 0
+                            tp_note = f" TP_progress={tp_progress:.0f}%"
+
+                        # Historical context
+                        profile = tp_profiles.get(t["symbol"], {})
+                        hist_note = ""
+                        if profile.get("sufficient_data"):
+                            hist_note = (
+                                f" [HISTORY: TP hit rate={profile['tp_hit_rate_pct']:.0f}%, "
+                                f"median achieved={profile['median_tp_achieved_pct']:.0f}% of TP, "
+                                f"avg peak={profile['avg_peak_toward_tp_pct']:.0f}% of TP]"
+                            )
+
+                        # Time open
+                        opened = t.get("opened_at", "")
+                        time_note = ""
+                        if opened:
+                            from datetime import datetime, timezone
+                            try:
+                                if isinstance(opened, str):
+                                    opened_dt = datetime.fromisoformat(opened)
+                                else:
+                                    opened_dt = opened
+                                hours = (datetime.now(timezone.utc) - opened_dt).total_seconds() / 3600
+                                time_note = f" open={hours:.1f}h"
+                            except Exception:
+                                pass
+
+                        positions_summary.append(
+                            f"  - {t['symbol']} {t['side']} size={size} "
+                            f"entry={entry:.2f} curr={curr:.2f} "
+                            f"SL={t.get('stop_loss', 'N/A')} TP={tp or 'N/A'} "
+                            f"PnL=${pnl:.2f} ({pnl_pct:+.1f}%)"
+                            f"{tp_note}{time_note}{hist_note} "
+                            f"trade_id={t['id']}"
+                        )
+                    except Exception:
+                        pass
+
+                if not positions_summary:
+                    await asyncio.sleep(600)
+                    continue
+
+                # Find risk managers and trigger review
+                risk_managers = [
+                    a for a in registry.get_all()
+                    if getattr(a, "role", "") == "risk_manager"
+                    and "auto" not in getattr(a, "name", "").lower()
+                ]
+                if risk_managers:
+                    prompt = (
+                        f"[POSITION REVIEW] You have {len(open_trades)} open position(s). "
+                        f"Review each one and decide if action is needed:\n"
+                        + "\n".join(positions_summary) + "\n\n"
+                        f"DECISION RULES (follow strictly):\n"
+                        f"1. DO NOT close trades that have been open less than 1 hour — they need time to develop.\n"
+                        f"2. DO NOT close trades where price is between SL and TP — the SL/TP monitor handles those.\n"
+                        f"3. Only close a trade if it has been open > 4 hours AND is making no progress toward TP.\n"
+                        f"4. A slightly negative PnL within 1% of entry is NORMAL — do NOT panic-close.\n"
+                        f"5. Losing trades: use close_trade — the system will automatically tighten the SL "
+                        f"instead of closing, reducing your max loss while giving the trade a chance to recover.\n"
+                        f"6. Only profitable trades will actually be closed by close_trade. "
+                        f"Losing trades get SL protection instead.\n"
+                        f"7. NEVER close all positions at once — evaluate each independently, max ONE per review.\n"
+                        f"8. If no trade meets close criteria, report 'No action needed' and move on.\n\n"
+                        f"Use check_sl_tp first. Then use close_trade on trades you think need action."
+                    )
+                    rm = risk_managers[0]
+                    try:
+                        await asyncio.wait_for(rm.run(prompt), timeout=120)
+                    except (asyncio.TimeoutError, Exception) as e:
+                        logger.debug(f"Position review by {rm.name} issue: {e}")
+
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.debug(f"Position review loop error: {e}")
+            await asyncio.sleep(600)  # Every 10 minutes
+
     async def _signal_review_reactor():
         """Event-driven: when a new signal needs review, immediately trigger the
         Risk Manager agent instead of waiting for its next scheduled interval.
@@ -281,10 +417,13 @@ async def _create_background_tasks(ceo, company_count: int, agent_count: int) ->
                 direction = data.get("direction", "?")
                 confidence = data.get("confidence", 0)
 
-                # Find risk_manager agents in the registry
+                # Find risk_manager agents (exclude auto_trade_executor role —
+                # those already handle execution at signal-creation time)
                 risk_managers = [
                     a for a in registry.get_all()
                     if getattr(a, "role", "") == "risk_manager"
+                    and "auto" not in getattr(a, "name", "").lower()
+                    and getattr(a, "role", "") != "auto_trade_executor"
                 ]
                 if not risk_managers:
                     logger.warning(f"Signal {signal_id} needs review but no risk_manager agents found")
@@ -300,24 +439,31 @@ async def _create_background_tasks(ceo, company_count: int, agent_count: int) ->
                     f"  Entry: {data.get('entry_price')}\n"
                     f"  SL: {data.get('stop_loss')} | TP: {data.get('take_profit')}\n"
                     f"  Reasoning: {data.get('reasoning', 'N/A')}\n\n"
-                    f"This signal expires in {5} minutes. Act NOW:\n"
+                    f"This signal expires in 15 minutes. Act NOW:\n"
                     f"1. If the signal looks good (R:R >= 1.5, reasonable SL/TP), approve it immediately "
                     f"with approve_signal.\n"
                     f"2. If it's weak, reject it with reject_signal and provide reason.\n"
                     f"Do NOT delay — the price is moving."
                 )
 
-                for rm in risk_managers:
+                # Run ALL risk managers in PARALLEL — sequential review was
+                # burning through the signal TTL and causing expirations
+                async def _review(rm, sig_id, sym, dirn, conf):
                     try:
                         logger.info(
                             f"Triggering {rm.name} for immediate signal review: "
-                            f"{symbol} {direction} (conf={confidence})"
+                            f"{sym} {dirn} (conf={conf})"
                         )
                         await asyncio.wait_for(rm.run(prompt), timeout=90)
                     except asyncio.TimeoutError:
-                        logger.warning(f"Risk Manager {rm.name} timed out reviewing signal {signal_id}")
+                        logger.warning(f"Risk Manager {rm.name} timed out reviewing signal {sig_id}")
                     except Exception as e:
                         logger.error(f"Risk Manager {rm.name} failed to review signal: {e}")
+
+                await asyncio.gather(
+                    *[_review(rm, signal_id, symbol, direction, confidence) for rm in risk_managers],
+                    return_exceptions=True,
+                )
         except asyncio.CancelledError:
             pass
         finally:
@@ -333,6 +479,7 @@ async def _create_background_tasks(ceo, company_count: int, agent_count: int) ->
         asyncio.create_task(_daily_report_loop(), name="daily_report_loop"),
         asyncio.create_task(_trade_monitor_loop(), name="trade_monitor"),
         asyncio.create_task(_signal_review_reactor(), name="signal_review_reactor"),
+        asyncio.create_task(_position_review_loop(), name="position_review"),
     ]
 
 

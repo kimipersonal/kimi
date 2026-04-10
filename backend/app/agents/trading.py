@@ -320,6 +320,33 @@ RISK_MANAGER_TOOLS_SCHEMA: list[dict] = [
     },
 ]
 
+# Historical analysis tool for risk managers
+HISTORY_ANALYSIS_TOOLS: list[dict] = [
+    {
+        "type": "function",
+        "function": {
+            "name": "tp_history_analysis",
+            "description": (
+                "Analyze historical TP (take-profit) achievement for a symbol. "
+                "Shows how often trades actually hit their TP target, what percentage "
+                "of TP is typically achieved, and recommended realistic exit points. "
+                "Use this BEFORE deciding whether to hold or close a position — "
+                "if history says full TP is rarely reached, close at current profit."
+            ),
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "symbol": {
+                        "type": "string",
+                        "description": "Trading symbol, e.g. 'BTCUSDT'",
+                    },
+                },
+                "required": ["symbol"],
+            },
+        },
+    },
+]
+
 # Tools for trade management — shared by risk_manager and auto_trade_executor
 TRADE_MANAGEMENT_TOOLS: list[dict] = [
     {
@@ -360,8 +387,8 @@ TRADE_MANAGEMENT_TOOLS: list[dict] = [
 _ROLE_SCHEMAS: dict[str, list[dict]] = {
     "market_researcher": RESEARCHER_TOOLS_SCHEMA,
     "analyst": ANALYST_TOOLS_SCHEMA,
-    "risk_manager": RISK_MANAGER_TOOLS_SCHEMA + TRADE_MANAGEMENT_TOOLS,
-    "auto_trade_executor": RISK_MANAGER_TOOLS_SCHEMA + TRADE_MANAGEMENT_TOOLS,
+    "risk_manager": RISK_MANAGER_TOOLS_SCHEMA + TRADE_MANAGEMENT_TOOLS + HISTORY_ANALYSIS_TOOLS,
+    "auto_trade_executor": RISK_MANAGER_TOOLS_SCHEMA + TRADE_MANAGEMENT_TOOLS + HISTORY_ANALYSIS_TOOLS,
 }
 
 TRADING_ROLES = {"market_researcher", "analyst", "risk_manager", "auto_trade_executor"}
@@ -498,8 +525,90 @@ class TradingAgent(BaseAgent):
                         risk_percent=arguments.get("risk_percent", 1.0),
                     )
                 case "close_trade":
+                    # Smart safeguard: if trade is losing, tighten SL instead
+                    # of panic-closing. If profitable, allow the close.
+                    trade_id = arguments["trade_id"]
+                    from app.db.database import async_session as _async_session
+                    from app.db.models import Trade as _Trade
+                    async with _async_session() as _sess:
+                        _trade = await _sess.get(_Trade, trade_id)
+                    if _trade and _trade.status == "open" and _trade.entry_price:
+                        from datetime import datetime, timezone
+                        # Get current price
+                        _prices = await trading_service.get_prices([_trade.symbol])
+                        _curr = _prices[0].get("last", 0) if _prices else 0
+                        if _curr:
+                            if _trade.side == "buy":
+                                _pnl = (_curr - _trade.entry_price) * _trade.size
+                            else:
+                                _pnl = (_trade.entry_price - _curr) * _trade.size
+
+                            # If LOSING → don't close, tighten SL instead
+                            if _pnl < 0 and _trade.stop_loss:
+                                if _trade.side == "buy":
+                                    sl_dist = _trade.entry_price - _trade.stop_loss
+                                else:
+                                    sl_dist = _trade.stop_loss - _trade.entry_price
+                                # Tighten SL to 50% of original distance
+                                if sl_dist > 0:
+                                    if _trade.side == "buy":
+                                        new_sl = round(_trade.entry_price - sl_dist * 0.5, 6)
+                                        # Only tighten, never widen
+                                        if new_sl > _trade.stop_loss:
+                                            old_sl = _trade.stop_loss
+                                            async with _async_session() as _sess2:
+                                                _db_t = await _sess2.get(_Trade, trade_id)
+                                                if _db_t:
+                                                    _db_t.stop_loss = new_sl
+                                                    if not _db_t.metadata_:
+                                                        _db_t.metadata_ = {}
+                                                    _db_t.metadata_["sl_tightened_by_agent"] = True
+                                                    _db_t.metadata_["original_stop_loss"] = _db_t.metadata_.get(
+                                                        "original_stop_loss", old_sl
+                                                    )
+                                                    await _sess2.commit()
+                                            result = {
+                                                "action": "sl_tightened",
+                                                "message": f"Trade is losing ${abs(_pnl):.2f}. "
+                                                f"Instead of closing at a loss, SL tightened: "
+                                                f"{old_sl:.2f} → {new_sl:.2f} (50% closer). "
+                                                f"SL monitor will auto-close if price keeps falling.",
+                                                "trade_id": trade_id,
+                                                "old_sl": old_sl,
+                                                "new_sl": new_sl,
+                                                "current_pnl": round(_pnl, 2),
+                                            }
+                                            return json.dumps(result, default=str)
+                                    else:  # sell
+                                        new_sl = round(_trade.entry_price + sl_dist * 0.5, 6)
+                                        if new_sl < _trade.stop_loss:
+                                            old_sl = _trade.stop_loss
+                                            async with _async_session() as _sess2:
+                                                _db_t = await _sess2.get(_Trade, trade_id)
+                                                if _db_t:
+                                                    _db_t.stop_loss = new_sl
+                                                    if not _db_t.metadata_:
+                                                        _db_t.metadata_ = {}
+                                                    _db_t.metadata_["sl_tightened_by_agent"] = True
+                                                    _db_t.metadata_["original_stop_loss"] = _db_t.metadata_.get(
+                                                        "original_stop_loss", old_sl
+                                                    )
+                                                    await _sess2.commit()
+                                            result = {
+                                                "action": "sl_tightened",
+                                                "message": f"Trade is losing ${abs(_pnl):.2f}. "
+                                                f"Instead of closing at a loss, SL tightened: "
+                                                f"{old_sl:.2f} → {new_sl:.2f} (50% closer). "
+                                                f"SL monitor will auto-close if price keeps falling.",
+                                                "trade_id": trade_id,
+                                                "old_sl": old_sl,
+                                                "new_sl": new_sl,
+                                                "current_pnl": round(_pnl, 2),
+                                            }
+                                            return json.dumps(result, default=str)
+                    # If profitable or no SL to tighten → allow close
                     result = await trading_service.close_trade(
-                        trade_id=arguments["trade_id"],
+                        trade_id=trade_id,
                     )
                 case "get_open_trades":
                     result = await trading_service.get_trade_history(limit=50)
@@ -508,6 +617,10 @@ class TradingAgent(BaseAgent):
                     result = await trading_service.check_open_trades()
                     if not result:
                         result = {"message": "No trades hit SL/TP levels"}
+                case "tp_history_analysis":
+                    result = await trading_service.get_symbol_tp_profile(
+                        symbol=arguments["symbol"]
+                    )
                 case _:
                     # Delegate to base class for sandbox/browser tools
                     return await super().execute_tool(tool_name, arguments)

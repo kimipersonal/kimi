@@ -94,27 +94,80 @@ export default function LogsPage() {
           </p>
         ) : (
           <div className="space-y-1">
-            {filtered.map((e, i) => (
-              <div key={i} className="text-xs font-mono flex gap-2 py-0.5 hover:bg-[var(--bg-secondary)] px-2 rounded">
-                <span className="text-[var(--text-secondary)] shrink-0 w-20">
-                  {e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : ''}
-                </span>
-                <span className={`shrink-0 w-40 ${eventColor(e.event)}`}>{e.event}</span>
-                <span className="shrink-0 w-16 text-[var(--text-secondary)]">{e.agent_id || '-'}</span>
-                <span className="truncate text-[var(--text-primary)]">
-                  {e.data?.name ? <span className="font-semibold">{String(e.data.name)}: </span> : null}
-                  {e.data?.action ? String(e.data.action) : ''}
-                  {e.data?.tool ? `tool:${String(e.data.tool)}` : ''}
-                  {e.data?.output ? ` → ${String(e.data.output).slice(0, 120)}` : ''}
-                  {e.data?.error ? ` ERROR: ${String(e.data.error)}` : ''}
-                  {e.data?.old_status ? `${String(e.data.old_status)} → ${String(e.data.new_status)}` : ''}
-                  {e.data?.description ? String(e.data.description) : ''}
-                </span>
+            {filtered.map((e, i) => {
+              const d = (e.data || {}) as Record<string, any>
+              return (
+              <div key={i} className="text-xs font-mono py-1 hover:bg-[var(--bg-secondary)] px-2 rounded">
+                <div className="flex gap-2">
+                  <span className="text-[var(--text-secondary)] shrink-0 w-20">
+                    {e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : ''}
+                  </span>
+                  <span className={`shrink-0 w-40 ${eventColor(e.event)}`}>{e.event}</span>
+                  <span className="shrink-0 text-[var(--text-secondary)]" style={{ width: 120, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                    {d.name || (e.agent_id ? e.agent_id.slice(0, 8) : '-')}
+                  </span>
+                  <span className="flex-1 truncate text-[var(--text-primary)]">
+                    {e.event === 'tool_call' && d.tool && (
+                      <><span className="text-yellow-400 font-semibold">{String(d.tool)}</span>{d.args ? <span className="text-[var(--text-secondary)]"> ({formatArgs(d.args)})</span> : null}</>
+                    )}
+                    {e.event === 'tool_result' && d.tool && (
+                      <><span className={d.success ? 'text-green-400' : 'text-red-400'}>{d.success ? '✓' : '✗'} {String(d.tool)}</span>{d.duration_ms != null && <span className="text-[var(--text-secondary)] ml-1">{String(d.duration_ms)}ms</span>}{d.preview ? <span className="text-[var(--text-secondary)] ml-1">{'\u2192'} {String(d.preview).slice(0, 200)}</span> : d.error ? <span className="text-red-400 ml-1">ERROR: {String(d.error).slice(0, 200)}</span> : null}</>
+                    )}
+                    {e.event === 'thinking_content' && d.content && (
+                      <span className="italic text-purple-300">{String(d.content).slice(0, 300)}</span>
+                    )}
+                    {e.event === 'thinking' && d.input && (
+                      <span className="text-[var(--text-secondary)]">Input: {String(d.input).slice(0, 200)}</span>
+                    )}
+                    {e.event === 'agent_state_change' && d.old_status && (
+                      <><span className="font-semibold">{d.name ? String(d.name) + ': ' : ''}</span><span className="text-[var(--text-secondary)]">{String(d.old_status)}</span> <span className="text-[var(--accent)]">{'\u2192'}</span> <span className="text-[var(--text-primary)]">{String(d.new_status)}</span></>
+                    )}
+                    {e.event === 'trade_signal' && (
+                      <><span className="font-semibold">{String(d.symbol)} {String(d.direction).toUpperCase()}</span> <span className="text-[var(--text-secondary)]">conf={typeof d.confidence === 'number' ? Math.round(d.confidence * 100) : '?'}%</span>{d.entry_price ? <span className="text-[var(--text-secondary)]"> @ {String(d.entry_price)}</span> : null}</>
+                    )}
+                    {e.event === 'trade_executed' && (
+                      <><span className="text-green-400 font-semibold">EXECUTED</span> <span>{String(d.symbol)} {String(d.side)}</span> <span className="text-[var(--text-secondary)]">size={String(d.size)} @ {String(d.filled_price || d.entry_price)}</span></>
+                    )}
+                    {e.event === 'trade_closed' && (
+                      <><span className="font-semibold">CLOSED</span> <span className="text-[var(--text-secondary)]">exit={String(d.exit_price)}</span>{d.pnl != null && <span className={Number(d.pnl) >= 0 ? 'text-green-400 ml-1' : 'text-red-400 ml-1'}>P&L: {Number(d.pnl) >= 0 ? '+' : ''}{Number(d.pnl).toFixed(2)}</span>}</>
+                    )}
+                    {e.event === 'auto_trade_executed' && (
+                      <><span className="text-yellow-400 font-semibold">AUTO-EXEC</span> <span>{String(d.symbol)} {String(d.direction)}</span> <span className="text-[var(--text-secondary)]">conf={typeof d.confidence === 'number' ? Math.round(d.confidence * 100) : '?'}%</span></>
+                    )}
+                    {e.event === 'log' && (
+                      <>
+                        {d.name ? <span className="font-semibold">{String(d.name)}: </span> : null}
+                        {d.action ? String(d.action) : ''}
+                        {d.tool ? ` tool:${String(d.tool)}` : ''}
+                        {d.output ? <span className="text-[var(--text-secondary)]"> {'\u2192'} {String(d.output).slice(0, 200)}</span> : null}
+                        {d.error ? <span className="text-red-400"> ERROR: {String(d.error)}</span> : null}
+                        {d.description ? String(d.description) : ''}
+                      </>
+                    )}
+                    {!['tool_call', 'tool_result', 'thinking_content', 'thinking', 'agent_state_change', 'trade_signal', 'trade_executed', 'trade_closed', 'auto_trade_executed', 'log'].includes(e.event) && (
+                      <>
+                        {d.name ? <span className="font-semibold">{String(d.name)}: </span> : null}
+                        {d.action ? String(d.action) : ''}
+                        {d.description ? String(d.description) : ''}
+                        {d.output ? ` ${'\u2192'} ${String(d.output).slice(0, 120)}` : ''}
+                      </>
+                    )}
+                  </span>
+                </div>
               </div>
-            ))}
+              )
+            })}
           </div>
         )}
       </div>
     </div>
   )
+}
+
+function formatArgs(args: unknown): string {
+  if (!args) return ''
+  try {
+    const s = typeof args === 'string' ? args : JSON.stringify(args)
+    return s.length > 120 ? s.slice(0, 120) + '…' : s
+  } catch { return '' }
 }

@@ -27,3 +27,6 @@ Thumbs.db
 # Data
 *.db
 *.sqlite3
+/logs/
+/backend/logs/
+backend.log

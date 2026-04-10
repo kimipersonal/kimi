@@ -239,7 +239,27 @@ class AutoTradeExecutor:
         if self.config.require_take_profit and not take_profit:
             reasons.append("Take-profit required but not provided")
 
-        # 4. Risk:reward ratio
+        # 4. SL/TP direction validation
+        if entry_price and stop_loss:
+            if direction == "buy" and stop_loss >= entry_price:
+                reasons.append(
+                    f"SL {stop_loss} is above entry {entry_price} for BUY — invalid direction"
+                )
+            elif direction == "sell" and stop_loss <= entry_price:
+                reasons.append(
+                    f"SL {stop_loss} is below entry {entry_price} for SELL — invalid direction"
+                )
+        if entry_price and take_profit:
+            if direction == "buy" and take_profit <= entry_price:
+                reasons.append(
+                    f"TP {take_profit} is below entry {entry_price} for BUY — invalid direction"
+                )
+            elif direction == "sell" and take_profit >= entry_price:
+                reasons.append(
+                    f"TP {take_profit} is above entry {entry_price} for SELL — invalid direction"
+                )
+
+        # 5. Risk:reward ratio
         if entry_price and stop_loss and take_profit:
             sl_distance = abs(entry_price - stop_loss)
             tp_distance = abs(take_profit - entry_price)
@@ -252,7 +272,7 @@ class AutoTradeExecutor:
             else:
                 reasons.append("Stop-loss distance is zero")
 
-        # 5. Symbol allowlist / blocklist
+        # 6. Symbol allowlist / blocklist
         if self.config.allowed_symbols and symbol not in [
             s.upper() for s in self.config.allowed_symbols
         ]:
@@ -260,13 +280,13 @@ class AutoTradeExecutor:
         if symbol in [s.upper() for s in self.config.blocked_symbols]:
             reasons.append(f"Symbol {symbol} is blocked")
 
-        # 6. Daily trade limit
+        # 7. Daily trade limit
         if self._daily.trades_executed >= self.config.max_daily_trades:
             reasons.append(
                 f"Daily trade limit reached ({self.config.max_daily_trades})"
             )
 
-        # 7. Daily loss limit
+        # 8. Daily loss limit
         if self._daily.total_pnl < 0:
             loss_pct = abs(self._daily.total_pnl)  # Already tracked as % or abs
             if loss_pct > self.config.max_daily_loss_pct:
@@ -274,7 +294,7 @@ class AutoTradeExecutor:
                     f"Daily loss limit exceeded ({loss_pct:.1f}% > {self.config.max_daily_loss_pct}%)"
                 )
 
-        # 8. Open positions check (requires trading service)
+        # 9. Open positions check (requires trading service)
         try:
             from app.services.trading.trading_service import trading_service
             if trading_service.is_connected:

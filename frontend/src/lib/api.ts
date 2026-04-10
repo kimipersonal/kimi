@@ -323,6 +323,11 @@ export const api = {
   getPortfolio: () => fetchAPI<any>('/api/trading/portfolio'),
   getTradeSignals: (limit = 20) => fetchAPI<any[]>(`/api/trading/signals?limit=${limit}`),
   getTradeHistory: (limit = 20) => fetchAPI<any[]>(`/api/trading/history?limit=${limit}`),
+  getTradeChain: (tradeId: string) => fetchAPI<any>(`/api/trading/trade-chain/${tradeId}`),
+  getLivePrices: () => fetchAPI<Record<string, number>>('/api/trading/live-prices'),
+  getTPProfile: (symbol: string) => fetchAPI<any>(`/api/trading/tp-profile/${symbol}`),
+  getAdvancedAnalysis: (symbol: string, interval = '4h') =>
+    fetchAPI<any>(`/api/trading/advanced-analysis/${encodeURIComponent(symbol)}?interval=${interval}`),
   decideSignal: (signalId: string, approved: boolean, reason?: string) =>
     fetchAPI<Record<string, unknown>>(`/api/trading/signals/${signalId}/decide`, {
       method: 'POST',
@@ -331,5 +336,16 @@ export const api = {
   closeTrade: (tradeId: string) =>
     fetchAPI<Record<string, unknown>>(`/api/trading/close/${tradeId}`, {
       method: 'POST',
+    }),
+  getTradingSettings: () => fetchAPI<any>('/api/trading/settings'),
+  updateAutoTradeConfig: (data: Record<string, unknown>) =>
+    fetchAPI<any>('/api/trading/settings/auto-trade', {
+      method: 'PUT',
+      body: JSON.stringify(data),
+    }),
+  updateRiskCaps: (data: Record<string, unknown>) =>
+    fetchAPI<any>('/api/trading/settings/risk-caps', {
+      method: 'PUT',
+      body: JSON.stringify(data),
     }),
 }

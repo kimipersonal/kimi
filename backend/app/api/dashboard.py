@@ -67,6 +67,51 @@ async def get_activity_logs(agent_id: str | None = None, limit: int = 100):
     return logs[-limit:]
 
 
+@router.get("/logs/db")
+async def get_activity_logs_db(
+    agent_id: str | None = None,
+    action: str | None = None,
+    limit: int = 200,
+):
+    """Get activity logs from the database with full details.
+
+    Supports filtering by agent_id and action type.
+    Returns detailed logs including tool args, thinking content, and results.
+    """
+    from sqlalchemy import desc, select
+    from app.db.database import async_session
+    from app.db.models import ActivityLog, Agent
+
+    async with async_session() as session:
+        q = select(ActivityLog).order_by(desc(ActivityLog.created_at)).limit(limit)
+        if agent_id:
+            q = q.where(ActivityLog.agent_id == agent_id)
+        if action:
+            q = q.where(ActivityLog.action == action)
+        result = await session.execute(q)
+        logs = result.scalars().all()
+
+        # Get agent names for display
+        agent_ids = list({log.agent_id for log in logs})
+        agents_result = await session.execute(
+            select(Agent).where(Agent.id.in_(agent_ids))
+        ) if agent_ids else None
+        agent_map = {a.id: a.name for a in agents_result.scalars().all()} if agents_result else {}
+
+        return [
+            {
+                "id": log.id,
+                "agent_id": log.agent_id,
+                "agent_name": agent_map.get(log.agent_id, "Unknown"),
+                "action": log.action,
+                "details": log.details,
+                "level": log.level,
+                "timestamp": log.created_at.isoformat() if log.created_at else None,
+            }
+            for log in logs
+        ]
+
+
 # --- Agent Conversations ---
 
 

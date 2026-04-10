@@ -6,7 +6,7 @@ from datetime import datetime, timezone, timedelta
 from sqlalchemy import desc, select, and_
 
 from app.db.database import async_session
-from app.db.models import Trade, TradeSignal
+from app.db.models import ActivityLog, Agent, Trade, TradeSignal
 from app.services.event_bus import event_bus
 from app.services.trading.base import (
     BaseTradingConnector,
@@ -233,6 +233,20 @@ class TradingService:
                     pos["entry_price"] = db_trade.entry_price
                 pos["stop_loss"] = db_trade.stop_loss
                 pos["take_profit"] = db_trade.take_profit
+                # Expose metadata for UI ratchet/protection indicators
+                meta = db_trade.metadata_ or {}
+                pos["initial_take_profit"] = meta.get("initial_take_profit")
+                pos["initial_stop_loss"] = meta.get("initial_stop_loss")
+                pos["tp_ratcheted"] = meta.get("tp_ratcheted", False)
+                pos["tp_ratchet_tier"] = meta.get("tp_ratchet_tier")
+                pos["breakeven_active"] = meta.get("breakeven_active", False)
+                pos["trailing_active"] = meta.get("trailing_active", False)
+                pos["sl_tightened_by_agent"] = meta.get("sl_tightened_by_agent", False)
+                pos["original_stop_loss"] = meta.get("original_stop_loss")
+                pos["highest_price"] = meta.get("highest_price")
+                pos["lowest_price"] = meta.get("lowest_price")
+                pos["signal_id"] = db_trade.signal_id
+                pos["agent_id"] = db_trade.agent_id
 
             # Current price from live data
             price_data = live_prices.get(sym, {})
@@ -746,6 +760,165 @@ class TradingService:
             "by_symbol": symbol_stats,
         }
 
+    async def get_symbol_tp_profile(self, symbol: str) -> dict:
+        """Analyze historical trades for a symbol to learn realistic TP behavior.
+
+        Returns how often trades reached various % of their TP target,
+        what the average achieved % was, and a recommended realistic TP
+        multiplier.  Used by the tiered profit protection system to
+        tighten exits when history says full TP is unlikely.
+        """
+        async with async_session() as session:
+            result = await session.execute(
+                select(Trade)
+                .where(Trade.status == "closed", Trade.symbol == symbol.upper())
+                .order_by(desc(Trade.closed_at))
+                .limit(100)  # last 100 trades for this symbol
+            )
+            trades = result.scalars().all()
+
+        if len(trades) < 3:
+            return {"symbol": symbol, "sample_size": len(trades), "sufficient_data": False}
+
+        # For each closed trade, compute how much of the TP distance was
+        # actually captured before the trade closed.
+        tp_achievements: list[float] = []
+        hit_full_tp = 0
+        hit_sl = 0
+        peak_achievements: list[float] = []  # how far toward TP the *peak* price went
+
+        for t in trades:
+            if not (t.entry_price and t.exit_price):
+                continue
+            tp_dist = abs(t.take_profit - t.entry_price) if t.take_profit else None
+            sl_dist = abs(t.entry_price - t.stop_loss) if t.stop_loss else None
+
+            if t.side == "buy":
+                exit_move = t.exit_price - t.entry_price
+            else:
+                exit_move = t.entry_price - t.exit_price
+
+            if tp_dist and tp_dist > 0:
+                achieved_pct = (exit_move / tp_dist) * 100
+                tp_achievements.append(achieved_pct)
+                if achieved_pct >= 95:
+                    hit_full_tp += 1
+
+            if sl_dist and (t.pnl or 0) < 0:
+                hit_sl += 1
+
+            # Check peak price from metadata (highest_price / lowest_price)
+            meta = t.metadata_ or {}
+            if tp_dist and tp_dist > 0:
+                if t.side == "buy" and meta.get("highest_price"):
+                    peak_move = meta["highest_price"] - t.entry_price
+                    peak_achievements.append((peak_move / tp_dist) * 100)
+                elif t.side == "sell" and meta.get("lowest_price"):
+                    peak_move = t.entry_price - meta["lowest_price"]
+                    peak_achievements.append((peak_move / tp_dist) * 100)
+
+        n = len(tp_achievements)
+        if n < 3:
+            return {"symbol": symbol, "sample_size": n, "sufficient_data": False}
+
+        avg_achieved = sum(tp_achievements) / n
+        median_achieved = sorted(tp_achievements)[n // 2]
+        tp_hit_rate = (hit_full_tp / n) * 100
+        sl_hit_rate = (hit_sl / len(trades)) * 100
+
+        avg_peak = sum(peak_achievements) / len(peak_achievements) if peak_achievements else avg_achieved
+
+        # Recommend a realistic TP target multiplier:
+        # If median achieved is 45% of TP → recommended_tp_factor = 0.45
+        # meaning "expect to capture ~45% of the original TP distance"
+        recommended_tp_factor = min(1.0, max(0.2, median_achieved / 100))
+
+        # Tier adjustment: if historical TP hit rate is < 30%, tighten all tiers
+        # by scaling down tolerances. E.g., if only 10% of trades hit TP,
+        # factor = 0.7 → multiply all tier tolerances by 0.7.
+        if tp_hit_rate < 30:
+            tier_tightening = max(0.5, tp_hit_rate / 30)  # 0.5 → 1.0
+        else:
+            tier_tightening = 1.0
+
+        return {
+            "symbol": symbol,
+            "sample_size": n,
+            "sufficient_data": True,
+            "tp_hit_rate_pct": round(tp_hit_rate, 1),
+            "sl_hit_rate_pct": round(sl_hit_rate, 1),
+            "avg_tp_achieved_pct": round(avg_achieved, 1),
+            "median_tp_achieved_pct": round(median_achieved, 1),
+            "avg_peak_toward_tp_pct": round(avg_peak, 1),
+            "recommended_tp_factor": round(recommended_tp_factor, 3),
+            "tier_tightening_factor": round(tier_tightening, 3),
+        }
+
+    # Cache for symbol TP profiles — refreshed every 30 minutes
+    _tp_profile_cache: dict[str, tuple[float, dict]] = {}
+    _TP_PROFILE_TTL = 1800  # 30 min
+
+    async def _get_tp_profile_cached(self, symbol: str) -> dict:
+        """Get cached TP profile for a symbol, refreshing if stale."""
+        import time
+        now = time.time()
+        cached = self._tp_profile_cache.get(symbol)
+        if cached and (now - cached[0]) < self._TP_PROFILE_TTL:
+            return cached[1]
+        profile = await self.get_symbol_tp_profile(symbol)
+        self._tp_profile_cache[symbol] = (now, profile)
+        return profile
+
+    def _compute_tiered_protection(
+        self,
+        peak_pnl: float,
+        current_pnl: float,
+        tp_progress_pct: float,
+        hours_open: float,
+        tier_tightening: float = 1.0,
+    ) -> tuple[bool, str]:
+        """Determine whether to close a trade based on tiered profit protection.
+
+        Args:
+            peak_pnl: Highest unrealized PnL observed
+            current_pnl: Current unrealized PnL
+            tp_progress_pct: How far peak price reached toward TP (0-100+)
+            hours_open: How many hours the trade has been open
+            tier_tightening: Factor from historical analysis (0.5–1.0, lower = tighter)
+
+        Returns:
+            (should_close, reason)
+        """
+        if peak_pnl <= self.PROFIT_PROTECT_MIN_PNL:
+            return False, ""
+        if current_pnl <= 0:
+            return False, ""  # Already negative — SL will handle it
+
+        profit_drop_pct = ((peak_pnl - current_pnl) / peak_pnl) * 100 if peak_pnl > 0 else 0
+
+        # Time decay: trades open longer get tighter protection
+        time_factor = 1.0
+        if hours_open > self.TIME_DECAY_HOURS:
+            time_factor = self.TIME_DECAY_FACTOR
+
+        # Walk through tiers from tightest to loosest
+        for min_tp_reached, base_tolerance in self.PROFIT_TIERS:
+            if tp_progress_pct >= min_tp_reached:
+                # Apply tightening: historical factor + time factor
+                adjusted_tolerance = base_tolerance * tier_tightening * time_factor
+                adjusted_tolerance = max(adjusted_tolerance, 10.0)  # floor at 10%
+
+                if profit_drop_pct >= adjusted_tolerance:
+                    return True, (
+                        f"Tiered protection: reached {tp_progress_pct:.0f}% of TP, "
+                        f"peak PnL ${peak_pnl:.2f} → now ${current_pnl:.2f} "
+                        f"({profit_drop_pct:.0f}% drop, tier tolerance {adjusted_tolerance:.0f}%, "
+                        f"time={hours_open:.1f}h, hist_factor={tier_tightening:.2f})"
+                    )
+                return False, ""  # Best-matching tier said don't close
+
+        return False, ""  # Didn't reach any tier threshold
+
     # ── Trade Signals ─────────────────────────────────────────────
 
     async def create_signal(
@@ -796,18 +969,17 @@ class TradingService:
         try:
             from app.services.auto_trade_executor import auto_trade_executor, AutoTradeMode
             if auto_trade_executor.config.mode != AutoTradeMode.DISABLED:
-                evaluation = await auto_trade_executor.evaluate_signal(result)
-                if evaluation.get("approved"):
-                    execution = await auto_trade_executor.try_auto_execute(result)
-                    if execution.get("executed"):
-                        result["status"] = "executed"
-                        result["auto_executed"] = True
-                        result["trade"] = execution.get("trade_result")
-                        auto_executed = True
-                        logger.info(
-                            f"Signal {result['id']} auto-executed: "
-                            f"{symbol} {direction}"
-                        )
+                # try_auto_execute already calls evaluate_signal internally
+                execution = await auto_trade_executor.try_auto_execute(result)
+                if execution.get("executed"):
+                    result["status"] = "executed"
+                    result["auto_executed"] = True
+                    result["trade"] = execution.get("trade_result")
+                    auto_executed = True
+                    logger.info(
+                        f"Signal {result['id']} auto-executed: "
+                        f"{symbol} {direction}"
+                    )
         except Exception as e:
             logger.debug(f"Auto-execute evaluation skipped: {e}")
 
@@ -863,7 +1035,8 @@ class TradingService:
             ]
 
     # Signal expiry TTL — signals older than this are stale and should not execute
-    SIGNAL_TTL_MINUTES = 5
+    # Was 5 min but that's too short for LLM-based risk managers to review
+    SIGNAL_TTL_MINUTES = 15
 
     async def approve_signal(
         self, signal_id: str, approved_by: str = "owner"
@@ -1031,6 +1204,60 @@ class TradingService:
             max_sl_distance = ref_price * (self.MAX_SL_PCT / 100)
             max_tp_distance = ref_price * (self.MAX_TP_PCT / 100)
 
+            # ── SL/TP Direction Validation ────────────────────────
+            # For BUY: SL must be below entry, TP must be above entry.
+            # For SELL: SL must be above entry, TP must be below entry.
+            # If they are reversed (agent mistake), swap them.
+            if stop_loss and take_profit:
+                if side.lower() == "buy":
+                    if stop_loss > ref_price and take_profit < ref_price:
+                        # SL and TP are completely swapped
+                        logger.warning(
+                            f"SL/TP SWAPPED for {symbol} BUY: SL {stop_loss} > entry {ref_price}, "
+                            f"TP {take_profit} < entry. Swapping."
+                        )
+                        stop_loss, take_profit = take_profit, stop_loss
+                    elif stop_loss > ref_price:
+                        # SL above entry for BUY — flip to mirror distance below entry
+                        old_sl = stop_loss
+                        sl_dist = stop_loss - ref_price
+                        stop_loss = round(ref_price - sl_dist, 6)
+                        logger.warning(
+                            f"SL direction fixed for {symbol} BUY: {old_sl} (above entry) "
+                            f"→ {stop_loss} (mirrored below entry {ref_price})"
+                        )
+                else:  # sell
+                    if stop_loss < ref_price and take_profit > ref_price:
+                        logger.warning(
+                            f"SL/TP SWAPPED for {symbol} SELL: SL {stop_loss} < entry {ref_price}, "
+                            f"TP {take_profit} > entry. Swapping."
+                        )
+                        stop_loss, take_profit = take_profit, stop_loss
+                    elif stop_loss < ref_price:
+                        old_sl = stop_loss
+                        sl_dist = ref_price - stop_loss
+                        stop_loss = round(ref_price + sl_dist, 6)
+                        logger.warning(
+                            f"SL direction fixed for {symbol} SELL: {old_sl} (below entry) "
+                            f"→ {stop_loss} (mirrored above entry {ref_price})"
+                        )
+            elif stop_loss and not take_profit:
+                # No TP — just validate SL direction
+                if side.lower() == "buy" and stop_loss > ref_price:
+                    old_sl = stop_loss
+                    sl_dist = stop_loss - ref_price
+                    stop_loss = round(ref_price - sl_dist, 6)
+                    logger.warning(
+                        f"SL direction fixed for {symbol} BUY (no TP): {old_sl} → {stop_loss}"
+                    )
+                elif side.lower() == "sell" and stop_loss < ref_price:
+                    old_sl = stop_loss
+                    sl_dist = ref_price - stop_loss
+                    stop_loss = round(ref_price + sl_dist, 6)
+                    logger.warning(
+                        f"SL direction fixed for {symbol} SELL (no TP): {old_sl} → {stop_loss}"
+                    )
+
             if stop_loss:
                 sl_distance = abs(ref_price - stop_loss)
                 if sl_distance > max_sl_distance:
@@ -1189,6 +1416,30 @@ class TradingService:
     MAX_POSITION_PCT = 10.0 # Max position value as % of account equity
     TRAILING_STOP_ACTIVATE_PCT = 1.5  # Activate trailing after this % profit
     TRAILING_STOP_DISTANCE_PCT = 1.0  # Trail SL this % behind price
+    BREAKEVEN_ACTIVATE_PCT = 0.5      # Move SL to breakeven at this % profit
+
+    # ── Tiered Profit Protection ──────────────────────────────────
+    # Instead of one flat threshold, protect profits based on how close
+    # we got to the target TP.  The further we reached toward TP, the
+    # tighter we protect.  Each tier = (min_% of TP reached, max allowed
+    # drop from peak PnL before we close).
+    #
+    # Example: trade reached 85% of the way to TP → we only tolerate a
+    # 20% drop from peak profit before closing.
+    PROFIT_TIERS: list[tuple[float, float]] = [
+        # (% of TP distance reached, max profit drop % tolerated)
+        (80.0, 20.0),   # Reached 80%+ of TP → close if profit drops 20% from peak
+        (60.0, 30.0),   # Reached 60%+ of TP → close if profit drops 30%
+        (40.0, 40.0),   # Reached 40%+ of TP → close if profit drops 40%
+        (20.0, 55.0),   # Reached 20%+ of TP → close if profit drops 55%
+        (10.0, 70.0),   # Reached 10%+ of TP → close if profit drops 70%
+    ]
+    PROFIT_PROTECT_MIN_PNL = 5.0      # Minimum peak PnL ($) before protection kicks in
+    PROFIT_PROTECT_MIN_PCT = 0.2      # Minimum peak PnL % before protection kicks in
+
+    # Time-based urgency: after this many hours, tighten all tiers by this factor
+    TIME_DECAY_HOURS = 8.0            # Start tightening after 8 hours
+    TIME_DECAY_FACTOR = 0.7           # Multiply tolerance by 0.7 after decay kicks in
 
     # Binance quantity step sizes (decimal places) — floor to avoid overshoot
     _QTY_PRECISION: dict[str, int] = {
@@ -1251,6 +1502,34 @@ class TradingService:
                 if trade.entry_price and trade.stop_loss:
                     if trade.side == "buy":
                         profit_pct = (highest - trade.entry_price) / trade.entry_price * 100
+
+                        # ── Breakeven Stop: move SL to entry when profit hits threshold ──
+                        if (
+                            profit_pct >= self.BREAKEVEN_ACTIVATE_PCT
+                            and trade.stop_loss < trade.entry_price
+                            and not meta.get("breakeven_active")
+                        ):
+                            old_sl = trade.stop_loss
+                            be_sl = round(trade.entry_price * 1.001, 6)  # slightly above entry to cover fees
+                            async with async_session() as sess:
+                                db_t = await sess.get(Trade, trade.id)
+                                if db_t:
+                                    db_t.stop_loss = be_sl
+                                    if not db_t.metadata_:
+                                        db_t.metadata_ = {}
+                                    db_t.metadata_["breakeven_active"] = True
+                                    db_t.metadata_["highest_price"] = highest
+                                    db_t.metadata_["lowest_price"] = lowest
+                                    await sess.commit()
+                            trade.stop_loss = be_sl
+                            meta["breakeven_active"] = True
+                            logger.info(
+                                f"Breakeven SL set for {trade.symbol}: "
+                                f"{old_sl:.2f} → {be_sl:.2f} (profit +{profit_pct:.1f}%)"
+                            )
+                            meta_changed = False
+
+                        # ── Trailing Stop: trail behind the highest price ──
                         if profit_pct >= self.TRAILING_STOP_ACTIVATE_PCT:
                             trail_sl = round(highest * (1 - self.TRAILING_STOP_DISTANCE_PCT / 100), 6)
                             # Only move SL up, never down
@@ -1275,6 +1554,34 @@ class TradingService:
                                 meta_changed = False  # already saved
                     else:  # sell
                         profit_pct = (trade.entry_price - lowest) / trade.entry_price * 100
+
+                        # ── Breakeven Stop for sell ──
+                        if (
+                            profit_pct >= self.BREAKEVEN_ACTIVATE_PCT
+                            and trade.stop_loss > trade.entry_price
+                            and not meta.get("breakeven_active")
+                        ):
+                            old_sl = trade.stop_loss
+                            be_sl = round(trade.entry_price * 0.999, 6)
+                            async with async_session() as sess:
+                                db_t = await sess.get(Trade, trade.id)
+                                if db_t:
+                                    db_t.stop_loss = be_sl
+                                    if not db_t.metadata_:
+                                        db_t.metadata_ = {}
+                                    db_t.metadata_["breakeven_active"] = True
+                                    db_t.metadata_["highest_price"] = highest
+                                    db_t.metadata_["lowest_price"] = lowest
+                                    await sess.commit()
+                            trade.stop_loss = be_sl
+                            meta["breakeven_active"] = True
+                            logger.info(
+                                f"Breakeven SL set for {trade.symbol} (sell): "
+                                f"{old_sl:.2f} → {be_sl:.2f} (profit +{profit_pct:.1f}%)"
+                            )
+                            meta_changed = False
+
+                        # ── Trailing Stop for sell ──
                         if profit_pct >= self.TRAILING_STOP_ACTIVATE_PCT:
                             trail_sl = round(lowest * (1 + self.TRAILING_STOP_DISTANCE_PCT / 100), 6)
                             if trail_sl < trade.stop_loss:
@@ -1309,23 +1616,185 @@ class TradingService:
                 should_close = False
                 close_reason = ""
 
-                if trade.side == "buy":
+                # ── Tiered Profit Protection (history-aware) ─────
+                # How far did peak price reach toward TP? And how much
+                # profit have we given back? Tighter tiers for trades
+                # that nearly reached TP. Historical analysis adjusts
+                # all tolerances per-symbol.
+                if trade.entry_price and trade.take_profit and not should_close:
+                    if trade.side == "buy":
+                        peak_pnl = (highest - trade.entry_price) * trade.size
+                        current_pnl = (current_price - trade.entry_price) * trade.size
+                        tp_dist = trade.take_profit - trade.entry_price
+                        peak_move = highest - trade.entry_price
+                    else:
+                        peak_pnl = (trade.entry_price - lowest) * trade.size
+                        current_pnl = (trade.entry_price - current_price) * trade.size
+                        tp_dist = trade.entry_price - trade.take_profit
+                        peak_move = trade.entry_price - lowest
+
+                    tp_progress_pct = (peak_move / tp_dist * 100) if tp_dist > 0 else 0
+
+                    # Historical tier tightening
+                    tier_tightening = 1.0
+                    try:
+                        profile = await self._get_tp_profile_cached(trade.symbol)
+                        if profile.get("sufficient_data"):
+                            tier_tightening = profile.get("tier_tightening_factor", 1.0)
+                    except Exception:
+                        pass
+
+                    # Hours open for time-decay
+                    hours_open = 0.0
+                    if trade.opened_at:
+                        hours_open = (datetime.now(timezone.utc) - trade.opened_at).total_seconds() / 3600
+
+                    should_close, close_reason = self._compute_tiered_protection(
+                        peak_pnl=peak_pnl,
+                        current_pnl=current_pnl,
+                        tp_progress_pct=tp_progress_pct,
+                        hours_open=hours_open,
+                        tier_tightening=tier_tightening,
+                    )
+
+                    # ── Auto-TP Ratchet: move TP closer to protect profits ──
+                    # When the trade has reached a significant % of the original TP,
+                    # lower the actual take_profit in the DB so even if our monitor
+                    # loop is slow/sleeping, the standard TP check will fire.
+                    # This is a one-way ratchet: TP only moves CLOSER to entry, never back.
+                    #
+                    # Tiers:  reached 80%+ → set TP to 80% of original
+                    #         reached 60%+ → set TP to 60%
+                    #         reached 40%+ → set TP to 40%  (only if history says TP rarely reached)
+                    initial_tp = meta.get("initial_take_profit", trade.take_profit)
+                    if tp_progress_pct >= 10 and initial_tp and tp_dist > 0:
+                        # Find the highest tier the trade has reached
+                        tp_ratchet_tiers = [
+                            (80.0, 0.80),  # Reached 80% → protect at 75% of TP
+                            (60.0, 0.55),  # Reached 60% → protect at 55% of TP
+                            (40.0, 0.35),  # Reached 40% → protect at 35% of TP (tight history)
+                        ]
+                        for tier_pct, protect_factor in tp_ratchet_tiers:
+                            effective_tier = tier_pct
+                            # Use tier_tightening from history to lower thresholds
+                            if tier_tightening < 1.0:
+                                effective_tier = tier_pct * tier_tightening
+
+                            if tp_progress_pct >= effective_tier:
+                                if trade.side == "buy":
+                                    new_tp = round(trade.entry_price + tp_dist * protect_factor, 6)
+                                    # Only ratchet down (never move TP further away)
+                                    if new_tp < trade.take_profit:
+                                        old_tp = trade.take_profit
+                                        async with async_session() as sess:
+                                            db_t = await sess.get(Trade, trade.id)
+                                            if db_t:
+                                                db_t.take_profit = new_tp
+                                                if not db_t.metadata_:
+                                                    db_t.metadata_ = {}
+                                                db_t.metadata_["initial_take_profit"] = initial_tp
+                                                db_t.metadata_["tp_ratcheted"] = True
+                                                db_t.metadata_["tp_ratchet_tier"] = tier_pct
+                                                await sess.commit()
+                                        trade.take_profit = new_tp
+                                        logger.info(
+                                            f"TP ratcheted for {trade.symbol} BUY: "
+                                            f"{old_tp:.2f} → {new_tp:.2f} "
+                                            f"(reached {tp_progress_pct:.0f}% of TP, "
+                                            f"protecting at {protect_factor:.0%})"
+                                        )
+                                else:  # sell
+                                    new_tp = round(trade.entry_price - tp_dist * protect_factor, 6)
+                                    if new_tp > trade.take_profit:
+                                        old_tp = trade.take_profit
+                                        async with async_session() as sess:
+                                            db_t = await sess.get(Trade, trade.id)
+                                            if db_t:
+                                                db_t.take_profit = new_tp
+                                                if not db_t.metadata_:
+                                                    db_t.metadata_ = {}
+                                                db_t.metadata_["initial_take_profit"] = initial_tp
+                                                db_t.metadata_["tp_ratcheted"] = True
+                                                db_t.metadata_["tp_ratchet_tier"] = tier_pct
+                                                await sess.commit()
+                                        trade.take_profit = new_tp
+                                        logger.info(
+                                            f"TP ratcheted for {trade.symbol} SELL: "
+                                            f"{old_tp:.2f} → {new_tp:.2f} "
+                                            f"(reached {tp_progress_pct:.0f}% of TP, "
+                                            f"protecting at {protect_factor:.0%})"
+                                        )
+                                break  # Use highest reached tier only
+
+                # Fallback for trades without TP: simple peak-drop protection
+                if trade.entry_price and not trade.take_profit and not should_close:
+                    if trade.side == "buy":
+                        peak_pnl = (highest - trade.entry_price) * trade.size
+                        current_pnl = (current_price - trade.entry_price) * trade.size
+                    else:
+                        peak_pnl = (trade.entry_price - lowest) * trade.size
+                        current_pnl = (trade.entry_price - current_price) * trade.size
+
+                    peak_pnl_pct = abs(peak_pnl / (trade.entry_price * trade.size)) * 100 if trade.entry_price else 0
+                    if peak_pnl > self.PROFIT_PROTECT_MIN_PNL and peak_pnl_pct > self.PROFIT_PROTECT_MIN_PCT and current_pnl > 0:
+                        drop_pct = ((peak_pnl - current_pnl) / peak_pnl) * 100 if peak_pnl > 0 else 0
+                        if drop_pct >= 55:  # No TP → use a conservative flat threshold
+                            should_close = True
+                            close_reason = (
+                                f"Profit protection (no TP): peak ${peak_pnl:.2f} → ${current_pnl:.2f} "
+                                f"({drop_pct:.0f}% drop from peak)"
+                            )
+
+                if not should_close and trade.side == "buy":
                     if trade.stop_loss and current_price <= trade.stop_loss:
-                        is_trailing = meta.get("trailing_active", False)
-                        should_close = True
-                        close_reason = (
-                            "Trailing SL hit" if is_trailing else "SL hit"
-                        ) + f": price {current_price:.2f} <= SL {trade.stop_loss:.2f}"
+                        # Safety: skip if SL is above entry (invalid direction)
+                        if trade.entry_price and trade.stop_loss >= trade.entry_price:
+                            logger.warning(
+                                f"SKIPPING invalid SL for {trade.symbol} BUY: "
+                                f"SL {trade.stop_loss:.2f} >= entry {trade.entry_price:.2f}. "
+                                f"Fixing SL direction."
+                            )
+                            # Auto-fix: mirror SL to correct side
+                            sl_dist = trade.stop_loss - trade.entry_price
+                            fixed_sl = round(trade.entry_price - sl_dist, 6)
+                            async with async_session() as sess:
+                                db_t = await sess.get(Trade, trade.id)
+                                if db_t:
+                                    db_t.stop_loss = fixed_sl
+                                    await sess.commit()
+                            trade.stop_loss = fixed_sl
+                        else:
+                            is_trailing = meta.get("trailing_active", False)
+                            should_close = True
+                            close_reason = (
+                                "Trailing SL hit" if is_trailing else "SL hit"
+                            ) + f": price {current_price:.2f} <= SL {trade.stop_loss:.2f}"
                     elif trade.take_profit and current_price >= trade.take_profit:
                         should_close = True
                         close_reason = f"TP hit: price {current_price:.2f} >= TP {trade.take_profit:.2f}"
-                else:  # sell
+                elif not should_close:  # sell
                     if trade.stop_loss and current_price >= trade.stop_loss:
-                        is_trailing = meta.get("trailing_active", False)
-                        should_close = True
-                        close_reason = (
-                            "Trailing SL hit" if is_trailing else "SL hit"
-                        ) + f": price {current_price:.2f} >= SL {trade.stop_loss:.2f}"
+                        # Safety: skip if SL is below entry (invalid direction)
+                        if trade.entry_price and trade.stop_loss <= trade.entry_price:
+                            logger.warning(
+                                f"SKIPPING invalid SL for {trade.symbol} SELL: "
+                                f"SL {trade.stop_loss:.2f} <= entry {trade.entry_price:.2f}. "
+                                f"Fixing SL direction."
+                            )
+                            sl_dist = trade.entry_price - trade.stop_loss
+                            fixed_sl = round(trade.entry_price + sl_dist, 6)
+                            async with async_session() as sess:
+                                db_t = await sess.get(Trade, trade.id)
+                                if db_t:
+                                    db_t.stop_loss = fixed_sl
+                                    await sess.commit()
+                            trade.stop_loss = fixed_sl
+                        else:
+                            is_trailing = meta.get("trailing_active", False)
+                            should_close = True
+                            close_reason = (
+                                "Trailing SL hit" if is_trailing else "SL hit"
+                            ) + f": price {current_price:.2f} >= SL {trade.stop_loss:.2f}"
                     elif trade.take_profit and current_price <= trade.take_profit:
                         should_close = True
                         close_reason = f"TP hit: price {current_price:.2f} <= TP {trade.take_profit:.2f}"
@@ -1372,14 +1841,173 @@ class TradingService:
 
         return closed
 
+    async def get_trade_chain(self, trade_id: str) -> dict | None:
+        """Get the full agent action chain for a specific trade.
+
+        Returns the signal origin, analyst agent, approver, executor,
+        and relevant activity log entries (tool calls, thinking, results).
+        """
+        async with async_session() as session:
+            trade = await session.get(Trade, trade_id)
+            if not trade:
+                return None
+
+            chain: dict = {
+                "trade_id": trade.id,
+                "symbol": trade.symbol,
+                "side": trade.side,
+                "status": trade.status,
+                "opened_at": trade.opened_at.isoformat() if trade.opened_at else None,
+                "closed_at": trade.closed_at.isoformat() if trade.closed_at else None,
+                "steps": [],
+            }
+
+            # Step 1: Signal analysis (if linked)
+            if trade.signal_id:
+                signal = await session.get(TradeSignal, trade.signal_id)
+                if signal:
+                    # Get analyst agent name
+                    analyst = await session.get(Agent, signal.agent_id) if signal.agent_id else None
+                    chain["steps"].append({
+                        "step": "signal_created",
+                        "label": "Signal Generated",
+                        "agent_name": analyst.name if analyst else "Unknown",
+                        "agent_id": signal.agent_id,
+                        "timestamp": signal.created_at.isoformat() if signal.created_at else None,
+                        "details": {
+                            "confidence": signal.confidence,
+                            "direction": signal.direction,
+                            "entry_price": signal.entry_price,
+                            "stop_loss": signal.stop_loss,
+                            "take_profit": signal.take_profit,
+                            "reasoning": signal.reasoning,
+                        },
+                    })
+
+                    # Step 2: Signal approval/rejection
+                    if signal.decided_at:
+                        chain["steps"].append({
+                            "step": "signal_decided",
+                            "label": f"Signal {'Approved' if signal.status in ('approved', 'executed') else 'Rejected'}",
+                            "agent_name": signal.approved_by or "Auto",
+                            "timestamp": signal.decided_at.isoformat(),
+                            "details": {
+                                "decision": signal.status,
+                                "approved_by": signal.approved_by,
+                            },
+                        })
+
+            # Step 3: Trade execution
+            executor = await session.get(Agent, trade.agent_id) if trade.agent_id else None
+            chain["steps"].append({
+                "step": "trade_executed",
+                "label": "Trade Executed",
+                "agent_name": executor.name if executor else "System",
+                "agent_id": trade.agent_id,
+                "timestamp": trade.opened_at.isoformat() if trade.opened_at else None,
+                "details": {
+                    "platform": trade.platform,
+                    "size": trade.size,
+                    "entry_price": trade.entry_price,
+                    "stop_loss": trade.stop_loss,
+                    "take_profit": trade.take_profit,
+                },
+            })
+
+            # Step 4: Protection events from metadata
+            meta = trade.metadata_ or {}
+            if meta.get("tp_ratcheted"):
+                chain["steps"].append({
+                    "step": "tp_ratcheted",
+                    "label": "TP Ratcheted",
+                    "agent_name": "Monitor",
+                    "details": {
+                        "original_tp": meta.get("initial_take_profit"),
+                        "ratcheted_tp": trade.take_profit,
+                        "tier": meta.get("tp_ratchet_tier"),
+                    },
+                })
+            if meta.get("breakeven_active"):
+                chain["steps"].append({
+                    "step": "breakeven_activated",
+                    "label": "Breakeven Activated",
+                    "agent_name": "Monitor",
+                    "details": {"stop_loss_moved_to": trade.stop_loss},
+                })
+            if meta.get("trailing_active"):
+                chain["steps"].append({
+                    "step": "trailing_activated",
+                    "label": "Trailing Stop Active",
+                    "agent_name": "Monitor",
+                    "details": {
+                        "highest_price": meta.get("highest_price"),
+                        "lowest_price": meta.get("lowest_price"),
+                    },
+                })
+
+            # Step 5: Trade close (if closed)
+            if trade.status == "closed":
+                chain["steps"].append({
+                    "step": "trade_closed",
+                    "label": "Trade Closed",
+                    "agent_name": "Monitor",
+                    "timestamp": trade.closed_at.isoformat() if trade.closed_at else None,
+                    "details": {
+                        "exit_price": trade.exit_price,
+                        "pnl": trade.pnl,
+                        "close_reason": meta.get("close_reason"),
+                    },
+                })
+
+            # Step 6: Fetch recent activity logs for involved agents
+            agent_ids = list({s.get("agent_id") for s in chain["steps"] if s.get("agent_id")})
+            if agent_ids:
+                # Get logs around the trade's time window
+                time_start = trade.opened_at - timedelta(minutes=5) if trade.opened_at else None
+                time_end = (trade.closed_at or trade.opened_at) + timedelta(minutes=5) if trade.opened_at else None
+                if time_start and time_end:
+                    log_result = await session.execute(
+                        select(ActivityLog)
+                        .where(
+                            and_(
+                                ActivityLog.agent_id.in_(agent_ids),
+                                ActivityLog.created_at >= time_start,
+                                ActivityLog.created_at <= time_end,
+                                ActivityLog.action.in_([
+                                    "thinking_content", "tool_call", "tool_result",
+                                ]),
+                            )
+                        )
+                        .order_by(ActivityLog.created_at)
+                        .limit(50)
+                    )
+                    chain["activity_logs"] = [
+                        {
+                            "agent_id": log.agent_id,
+                            "action": log.action,
+                            "details": log.details,
+                            "level": log.level,
+                            "timestamp": log.created_at.isoformat() if log.created_at else None,
+                        }
+                        for log in log_result.scalars().all()
+                    ]
+                else:
+                    chain["activity_logs"] = []
+            else:
+                chain["activity_logs"] = []
+
+            return chain
+
     async def get_trade_history(self, limit: int = 50) -> list[dict]:
         """Get trade history from DB."""
         async with async_session() as session:
             result = await session.execute(
                 select(Trade).order_by(desc(Trade.opened_at)).limit(limit)
             )
-            return [
-                {
+            trades = []
+            for t in result.scalars().all():
+                meta = t.metadata_ or {}
+                trades.append({
                     "id": t.id,
                     "platform": t.platform,
                     "symbol": t.symbol,
@@ -1392,11 +2020,20 @@ class TradingService:
                     "pnl": t.pnl,
                     "status": t.status,
                     "signal_id": t.signal_id,
+                    "agent_id": t.agent_id,
                     "opened_at": t.opened_at.isoformat() if t.opened_at else None,
                     "closed_at": t.closed_at.isoformat() if t.closed_at else None,
-                }
-                for t in result.scalars().all()
-            ]
+                    # Protection metadata
+                    "initial_take_profit": meta.get("initial_take_profit"),
+                    "initial_stop_loss": meta.get("initial_stop_loss"),
+                    "tp_ratcheted": meta.get("tp_ratcheted", False),
+                    "tp_ratchet_tier": meta.get("tp_ratchet_tier"),
+                    "breakeven_active": meta.get("breakeven_active", False),
+                    "trailing_active": meta.get("trailing_active", False),
+                    "sl_tightened_by_agent": meta.get("sl_tightened_by_agent", False),
+                    "close_reason": meta.get("close_reason"),
+                })
+            return trades
 
     async def expire_stale_signals(self) -> int:
         """Expire pending signals older than SIGNAL_TTL_MINUTES.
